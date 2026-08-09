@@ -1,7 +1,8 @@
 import Map "mo:core/Map";
 
 module {
-    // Stable MTN physical Neutron app instance id -> logical app id mapping.
+    // Stable multitenancy-neutron physical Neutron app instance id -> logical
+    // app id mapping.
     //
     // Example:
     //   hello_001 -> hello
