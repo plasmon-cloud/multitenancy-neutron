@@ -27,6 +27,11 @@
       devShells = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+
+          # Generic Neutron development fix discovered during MTN work:
+          # Playwright's Nix Chromium needs an explicit usable Fontconfig setup
+          # (including a real font) or local browser tests can fail before the
+          # application itself is exercised. This is not an MTN runtime feature.
           fontsConf = pkgs.makeFontsConf {
             fontDirectories = [
               pkgs.dejavu_fonts
