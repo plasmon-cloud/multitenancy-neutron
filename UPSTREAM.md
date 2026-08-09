@@ -1,29 +1,35 @@
-# MTN upstream divergence notes
+# multitenancy-neutron upstream divergence notes
 
-This file records why `multitenancy-neutron` intentionally differs from upstream Neutron and which differences are temporary Phase 1–9 scaffolding rather than long-term MTN architecture.
+This file records why `multitenancy-neutron` intentionally differs from upstream Neutron and which differences are temporary Phase 1–9 scaffolding rather than long-term `multitenancy-neutron` architecture.
 
 The target relationship is:
 
-> Multi-Tenancy Neutron (MTN) = backwards-compatible Neutron + generic multi-tenant execution/allocation + a minimal built-in tenant control plane.
+> `multitenancy-neutron` = backwards-compatible Neutron + generic multi-tenant execution/allocation + a minimal built-in tenant control plane.
 
-Plasmon is a separate future control plane that consumes MTN. Plasmon/Malstorm product concepts such as Element, Isotope, Atom, porter, and product-specific bootstrap tooling are not MTN kernel architecture.
+Plasmon is a separate future control plane that consumes `multitenancy-neutron`. Plasmon/Malstorm product concepts such as Element, Isotope, Atom, porter, and product-specific bootstrap tooling are not `multitenancy-neutron` kernel architecture.
+
+## Repository branch model
+
+Within this repository, `dev` is the integration base for version branches such as `version-0.0.1`. Version work should be compared against and eventually merged back into `dev`, not directly into this repository's `main` branch.
+
+References in this document to **upstream Neutron `main`** mean the external/upstream Neutron source baseline, not the `multitenancy-neutron` integration branch.
 
 ## Review rule
 
-For every divergence from upstream:
+For every divergence from upstream Neutron:
 
-1. Ask whether the file can now be restored exactly from current upstream.
-2. If not, move as much MTN implementation as practical into MTN-owned modules and leave one small, obvious seam in the upstream file.
+1. Ask whether the file can now be restored exactly from current upstream Neutron.
+2. If not, move as much `multitenancy-neutron` implementation as practical into `multitenancy-neutron`-owned modules and leave one small, obvious seam in the upstream-derived file.
 3. Preserve focused tests for every authorization, isolation, persistence, allocation, lifecycle, and compatibility invariant.
-4. Never hand-edit generated output merely to preserve an MTN delta; change its source or generator instead.
+4. Never hand-edit generated output merely to preserve a `multitenancy-neutron` delta; change its source or generator instead.
 
 Inline comments should be concentrated at places where a future maintainer could otherwise remove an important invariant while performing an apparently harmless cleanup.
 
-## Core MTN invariants
+## Core multitenancy-neutron invariants
 
 ### Allocation
 
-For a tenant principal and logical application, MTN permits at most one usable physical Neutron app instance:
+For a tenant principal and logical application, `multitenancy-neutron` permits at most one usable physical Neutron app instance:
 
 ```text
 (principal, logical app) -> zero or one physical app_instance
@@ -51,7 +57,7 @@ Never migrate the legacy unscoped `neutron-kernel-workspaces-v2` value into a pr
 
 ### Stable-memory compatibility
 
-MTN currently adds these persistent roots:
+`multitenancy-neutron` currently adds these persistent roots:
 
 ```text
 tenants
@@ -64,11 +70,11 @@ Their names and `v1.mo` layouts are upgrade-sensitive. Physical and logical ids 
 
 If `v0.0.1` explicitly declares that historical Malstorm/Phase 1–9 development deployments have no upgrade guarantee, these identities may be redesigned once before release. Otherwise structural changes require migration. Do not casually rename these roots or persisted identifiers.
 
-## Required MTN source divergences
+## Required multitenancy-neutron source divergences
 
 ### `apps/kernel/backend/app_instances/Allocation.mo`
 
-**Category:** MTN requirement.
+**Category:** `multitenancy-neutron` requirement.
 
 Resolves a tenant's already-assigned physical instance for a logical app. Reads remain deterministic if older state contains duplicate grants, while allocation writes must prevent new duplicates. Unusable or retired instances must not be selected.
 
@@ -76,19 +82,19 @@ Protected by `apps/kernel/test/motoko/app_instance_allocation_test.mo` and deplo
 
 ### `apps/kernel/backend/memory/tenants/v1.mo`
 
-**Category:** MTN requirement; persistence-sensitive.
+**Category:** `multitenancy-neutron` requirement; persistence-sensitive.
 
 Stores tenant principal -> physical app-instance grants. Logical uniqueness is derived through `app_instances`; do not introduce a second logical installation record here.
 
 ### `apps/kernel/backend/memory/app_instances/v1.mo`
 
-**Category:** MTN requirement; persistence-sensitive.
+**Category:** `multitenancy-neutron` requirement; persistence-sensitive.
 
 Stores physical app-instance id -> logical app id. This mapping intentionally separates tenant-visible logical application identity from the physical Neutron execution identity.
 
 ### `apps/kernel/backend/memory/app_instance_lifecycle/v1.mo`
 
-**Category:** MTN requirement; persistence-sensitive.
+**Category:** `multitenancy-neutron` requirement; persistence-sensitive.
 
 Persists physical-instance retirement. Retirement is permanent non-reuse state, not merely a transient capacity flag. A retired physical id must never be returned by future allocation.
 
@@ -96,31 +102,31 @@ Persists physical-instance retirement. Retirement is permanent non-reuse state, 
 
 ### `apps/kernel/backend/memory/app_catalog/v1.mo`
 
-**Category:** MTN requirement; persistence-sensitive.
+**Category:** `multitenancy-neutron` requirement; persistence-sensitive.
 
 Stores logical application metadata independently of physical app instances. Preserve that separation; catalog entries are not physical installation records.
 
 ### `apps/kernel/backend/main.mo`
 
-**Category:** MTN requirement; major upstream-conflict hotspot.
+**Category:** `multitenancy-neutron` requirement; major upstream-conflict hotspot.
 
 Contains the actor seams for tenant membership/grants, owner-vs-tenant authorization, logical catalog, physical instance registry, lifecycle/retirement, deterministic allocation, AppScope authorization, and owner-only administration.
 
-Keep ordinary Neutron owner semantics intact. Refactor toward MTN-owned backend modules so `main.mo` eventually contains mostly imports, service construction, small wrappers, and unavoidable actor/authorization seams.
+Keep ordinary Neutron owner semantics intact. Refactor toward `multitenancy-neutron`-owned backend modules so `main.mo` eventually contains mostly imports, service construction, small wrappers, and unavoidable actor/authorization seams.
 
 ### `apps/kernel/src/reducer/apps.ts`
 
-**Category:** MTN requirement; upstream-conflict hotspot.
+**Category:** `multitenancy-neutron` requirement; upstream-conflict hotspot.
 
-Phase 1–9 accumulated logical catalog, pool publishing, capacity, and allocation behavior here. Move MTN-specific behavior toward MTN-owned modules and keep ordinary upstream install/package reducer behavior as close to upstream as possible.
+Phase 1–9 accumulated logical catalog, pool publishing, capacity, and allocation behavior here. Move `multitenancy-neutron`-specific behavior toward `multitenancy-neutron`-owned modules and keep ordinary upstream install/package reducer behavior as close to upstream as possible.
 
-Compatibility invariant: MTN must not fork the `.neutron` package format. Any standard `.neutron` package supported by upstream Neutron must remain compatible with MTN.
+Compatibility invariant: `multitenancy-neutron` must not fork the `.neutron` package format. Any standard `.neutron` package supported by upstream Neutron must remain compatible with `multitenancy-neutron`.
 
 Known limitation: the Phase 9 runtime publishing prototype intentionally rejects packages with dependencies. Do not describe that prototype as universal upstream-package publishing support until the limitation is removed or clearly separated from ordinary package compatibility.
 
 ### `apps/kernel/src/reducer/auth.ts`
 
-**Category:** MTN requirement; upstream-conflict hotspot.
+**Category:** `multitenancy-neutron` requirement; upstream-conflict hotspot.
 
 Adds tenant self-enrollment, owner-vs-tenant role state, tenant app discovery/allocation, and activation of principal-scoped workspace persistence.
 
@@ -128,15 +134,15 @@ Self-enrollment creates tenant authorization only. The flow must recheck authori
 
 ### `apps/kernel/src/workspace/store.ts`
 
-**Category:** MTN requirement; privacy-sensitive.
+**Category:** `multitenancy-neutron` requirement; privacy-sensitive.
 
 The principal/canister-scoped persistence key prevents Tenant B from loading Tenant A's persisted workspace when they share a browser and kernel origin. The legacy unscoped key must never be migrated into a scoped tenant workspace.
 
-If possible, move key construction/scope switching into a small MTN persistence module so the ordinary workspace store can stay closer to upstream.
+If possible, move key construction/scope switching into a small `multitenancy-neutron` persistence module so the ordinary workspace store can stay closer to upstream.
 
 ### `apps/kernel/src/workspace/Launcher.tsx`
 
-**Category:** current MTN requirement; major upstream-conflict hotspot.
+**Category:** current `multitenancy-neutron` requirement; major upstream-conflict hotspot.
 
 Contains the Phase 9 tenant launcher. Required behavior is `Install` when no physical allocation exists and `Open` after allocation. Reopening and reloading must use the same physical instance.
 
@@ -146,7 +152,7 @@ Preferred Phase 10 shape: move this tenant UI to `TenantLauncher.tsx`, restore u
 
 ### `apps/kernel/src/workspace/KernelTrayItem.tsx`
 
-**Category:** current MTN requirement; upstream-conflict hotspot.
+**Category:** current `multitenancy-neutron` requirement; upstream-conflict hotspot.
 
 Tenants must not receive owner Settings/system-administration behavior. Prefer moving tenant behavior to `TenantKernelTrayItem.tsx`, restoring upstream `KernelTrayItem.tsx`, and selecting by session role at one small shell seam.
 
@@ -158,7 +164,7 @@ Covers deterministic same-logical-app resolution, deterministic duplicate handli
 
 ### `apps/kernel/test/auth.test.ts`
 
-The MTN-specific behavior protects tenant self-enrollment followed by an authorization recheck. Preserve ordinary owner authentication behavior as an upstream compatibility requirement.
+The `multitenancy-neutron`-specific behavior protects tenant self-enrollment followed by an authorization recheck. Preserve ordinary owner authentication behavior as an upstream compatibility requirement.
 
 ### `test/e2e/local-kernel.spec.ts`
 
@@ -180,9 +186,9 @@ The Phase 1–9 tenant-boundary test is authoritative even where names still con
 
 The tenant launcher test additionally protects `Install -> Open -> reopen/reload same physical instance` behavior.
 
-## Generic Neutron fixes discovered during MTN work
+## Generic Neutron fixes discovered during multitenancy-neutron work
 
-These are not conceptually multi-tenancy features. Retain them only if current upstream still needs them; otherwise restore upstream and, where appropriate, propose them upstream separately.
+These are not conceptually multi-tenancy features. Retain them only if current upstream Neutron still needs them; otherwise restore upstream and, where appropriate, propose them upstream separately.
 
 ### `packages/neutron-scripts/src/motoko.ts`
 ### `packages/neutron-scripts/src/walk.ts`
@@ -201,16 +207,16 @@ The isolated process avoids Bun `mock.module()` process-global state poisoning l
 ### `apps/kernel/test/helpers/kernel_wrapper.ts`
 ### `apps/kernel/test/install.test.ts`
 
-Generic test-harness cleanup: assemble the actual kernel wrapper through the shared helper rather than maintaining brittle duplicated wrapper expectations. Keep generic improvements; move MTN-specific memory/API assertions to focused MTN tests where possible.
+Generic test-harness cleanup: assemble the actual kernel wrapper through the shared helper rather than maintaining brittle duplicated wrapper expectations. Keep generic improvements; move `multitenancy-neutron`-specific memory/API assertions to focused `multitenancy-neutron` tests where possible.
 
 ### `packages/neutron-compiler/src/assemble.ts`
 ### `packages/neutron-compiler/test/assemble.test.ts`
 
-The remaining branch delta is small and must be audited line-by-line against current upstream. Current upstream already contains active app-instance inventory/AppScope assembler infrastructure; do not assume every remaining line is MTN-required.
+The remaining branch delta is small and must be audited line-by-line against current upstream Neutron. Current upstream Neutron already contains active app-instance inventory/AppScope assembler infrastructure; do not assume every remaining line is required by `multitenancy-neutron`.
 
 ## Other Phase 1–9 test/build deltas to audit
 
-These changed during Phase 1–9 but are not, by themselves, permanent MTN architecture:
+These changed during Phase 1–9 but are not, by themselves, permanent `multitenancy-neutron` architecture:
 
 ```text
 apps/kernel/package.json
@@ -221,7 +227,7 @@ apps/kernel/test/permission_dialog.test.tsx
 apps/kernel/test/privacy_client.test.ts
 ```
 
-Retain only changes still required by a focused MTN or generic-Neutron test/build contract.
+Retain only changes still required by a focused `multitenancy-neutron` or generic-Neutron test/build contract.
 
 ## Generated or generator-owned files
 
@@ -261,7 +267,7 @@ Generated/untracked build output such as `dist/`, `*.neutron`, and `.mops/` is n
 
 ## Temporary Phase 1–9 scaffolding
 
-These are historical bootstrap/control-plane files, not permanent MTN production surface:
+These are historical bootstrap/control-plane files, not permanent `multitenancy-neutron` production surface:
 
 ```text
 malstorm-phase0.ndeploy.json
@@ -278,7 +284,7 @@ package.json                  # plasmon:* root scripts only
 .gitignore                    # .plasmon-generated / plasmon.ndeploy.json entries
 ```
 
-Useful logic may be genericized into MTN tooling, moved to test/support fixtures, or moved to the separate Plasmon repository. Production MTN code/docs/tooling should not retain `plasmon` or `malstorm` names unless deliberately used as an external compatibility fixture.
+Useful logic may be genericized into `multitenancy-neutron` tooling, moved to test/support fixtures, or moved to the separate Plasmon repository. Production `multitenancy-neutron` code/docs/tooling should not retain `plasmon` or `malstorm` names unless deliberately used as an external compatibility fixture.
 
 ## Duplicate physical-app fixtures
 
@@ -309,13 +315,13 @@ TODO.md
 doc/architecture.md
 ```
 
-These contain historical Plasmon/Malstorm product architecture. Do not mechanically rename Plasmon -> MTN. Rewrite them around generic MTN responsibilities and move Element/Isotope/Atom/porter/Plasmon architecture to the separate Plasmon project.
+These contain historical Plasmon/Malstorm product architecture. Do not mechanically rename Plasmon to `multitenancy-neutron`. Rewrite them around generic `multitenancy-neutron` responsibilities and move Element/Isotope/Atom/porter/Plasmon architecture to the separate Plasmon project.
 
-## CI branch scaffolding
+## CI branch policy
 
 ### `.github/workflows/kernel-ci.yml`
 
-The branch-specific addition for `malstorm-phase1` is historical scaffolding. Do not carry that branch name into the final MTN workflow; use normal `main`, PR CI, and whatever release-branch policy MTN adopts.
+`dev` is the integration branch for `multitenancy-neutron` version work. The historical `malstorm-phase1` CI target must not return. Keep pull-request CI and normal stable-branch CI as appropriate, but version branches target `dev` for integration.
 
 ## Validation baseline
 
@@ -330,8 +336,13 @@ npm run plasmon:test
 
 The focused tenant-launcher Playwright test also passed twice consecutively.
 
-Treat the branch as a validated behavior baseline, not a clean architecture baseline. Ordinary upstream Neutron owner behavior remains a hard compatibility requirement; MTN tests supplement upstream package/kernel/E2E gates rather than replacing them.
+Treat the branch as a validated behavior baseline, not a clean architecture baseline. Ordinary upstream Neutron owner behavior remains a hard compatibility requirement; `multitenancy-neutron` tests supplement upstream package/kernel/E2E gates rather than replacing them.
 
-## Before the final MTN PR
+## Before merging `version-0.0.1` into `dev`
 
-Compare `version-0.0.1` against current upstream/main, not merely against the historical Phase 1–9 fork point. For each modified upstream file, first try to restore it exactly. If that is impossible, aim to move 90%+ of MTN implementation into MTN-owned files and leave one small, explicit, documented seam.
+Compare `version-0.0.1` against both `dev` and current upstream Neutron `main`:
+
+- `dev` is the repository integration base and the eventual merge target.
+- upstream Neutron `main` is the compatibility/conflict-minimization reference.
+
+For each modified upstream-derived file, first try to restore it exactly to current upstream Neutron. If that is impossible, aim to move 90%+ of `multitenancy-neutron` implementation into `multitenancy-neutron`-owned files and leave one small, explicit, documented seam.
