@@ -1,14 +1,12 @@
 # multitenancy-neutron TODO
 
-This file tracks work required to turn the current `version-0.0.1` behavior baseline into a clean, reviewable multi-tenant Neutron implementation.
-
-`dev` is the repository integration base. Upstream Neutron `main` is the compatibility reference used when deciding whether an upstream-derived file can be restored or reduced to a small integration seam.
+This file tracks work required to turn the current behavior baseline into a clean, reviewable multi-tenant Neutron implementation.
 
 See [UPSTREAM.md](UPSTREAM.md) for the divergence inventory and [doc/architecture.md](doc/architecture.md) for the runtime model.
 
 ## Completed foundation
 
-The current branch already demonstrates the essential multi-tenant behavior:
+The current implementation already demonstrates the essential multi-tenant behavior:
 
 - [x] Tenant membership keyed by principal.
 - [x] Physical app-instance grants per tenant.
@@ -26,11 +24,19 @@ The current branch already demonstrates the essential multi-tenant behavior:
 - [x] Browser workspace persistence is scoped by kernel canister id and principal.
 - [x] App-pool generation/deployment helpers use repository-generic naming.
 - [x] Legacy product-specific names removed from active root tooling and current multi-tenant UI paths.
-- [x] Development branch CI targets `dev` instead of the historical feature branch.
 
-## P0 — version 0.0.1 cleanup
+## P0 — validation baseline
 
-### Minimize upstream frontend conflicts
+Before deeper architectural cleanup, preserve and validate the existing behavior baseline.
+
+- [ ] `npm --workspace neutron-kernel run package`
+- [ ] `npm --workspace neutron-kernel test`
+- [ ] `npm run multitenancy-neutron:deploy`
+- [ ] `npm run multitenancy-neutron:test`
+- [ ] Run ordinary upstream Neutron E2E coverage required by the modified upstream-derived files.
+- [ ] Confirm no stale higher-level product terminology remains in runtime code, tests, scripts, filenames, or repository documentation.
+
+## P1 — minimize upstream frontend conflicts
 
 - [ ] Create `TenantLauncher.tsx` and move tenant-only catalog/allocation UI out of `Launcher.tsx`.
 - [ ] Restore `Launcher.tsx` as close to current upstream Neutron as possible.
@@ -39,7 +45,7 @@ The current branch already demonstrates the essential multi-tenant behavior:
 - [ ] Keep only a small role-selection seam in the workspace shell.
 - [ ] Move principal-scoped workspace persistence helpers into a focused multi-tenancy module if that materially reduces the `store.ts` delta.
 
-### Minimize upstream backend conflicts
+## P1 — minimize upstream backend conflicts
 
 - [ ] Extract tenant membership/grant logic from `apps/kernel/backend/main.mo` into focused backend modules.
 - [ ] Extract app catalog, physical registry, allocation, and lifecycle logic from `main.mo` where the actor boundary does not require it to remain inline.
@@ -47,14 +53,14 @@ The current branch already demonstrates the essential multi-tenant behavior:
 - [ ] Preserve exact AppScope authorization; do not replace physical-scope checks with logical-app checks.
 - [ ] Audit all newly introduced stable-memory roots before declaring upgrade compatibility.
 
-### Minimize reducer conflicts
+## P1 — minimize reducer conflicts
 
 - [ ] Move logical catalog/allocation session helpers out of `apps/kernel/src/reducer/auth.ts` where possible.
 - [ ] Move app-pool publication/capacity code out of `apps/kernel/src/reducer/apps.ts` into repository-owned modules.
 - [ ] Keep ordinary Neutron install/update/uninstall behavior upstream-compatible.
 - [ ] Preserve the one-authoritative-refresh launcher race fix after allocation; do not replace it with sleeps, polling, or arbitrary retries.
 
-### Complete lifecycle coverage
+## P1 — complete lifecycle coverage
 
 - [ ] Add a deployed regression test for retirement non-reuse:
 
@@ -68,9 +74,9 @@ The current branch already demonstrates the essential multi-tenant behavior:
 - [ ] Verify retired instances remain unavailable after actor/client recreation.
 - [ ] Verify a retired id cannot be reintroduced through owner grant or pool-registration paths.
 
-### Replace copied physical-app fixtures
+## P1 — replace copied physical-app fixtures
 
-Current Phase 1–9 fixtures duplicate full application trees:
+The current proof-of-concept fixtures duplicate full application trees:
 
 ```text
 apps/demo_001/
@@ -85,18 +91,7 @@ Replace them with one canonical ordinary `.neutron` application per logical app 
 - [ ] Keep generated physical packages out of Git.
 - [ ] Ensure fixture generation does not alter the `.neutron` package format.
 
-### Validate the cleanup
-
-- [ ] `npm --workspace neutron-kernel run package`
-- [ ] `npm --workspace neutron-kernel test`
-- [ ] `npm run multitenancy-neutron:deploy`
-- [ ] `npm run multitenancy-neutron:test`
-- [ ] Run ordinary upstream Neutron E2E coverage required by the modified upstream-derived files.
-- [ ] Confirm `version-0.0.1` is 0 commits behind `dev` before review.
-
 ## P1 — upstream audit
-
-### Generic Neutron fixes
 
 Several changes were discovered while implementing multi-tenancy but are not themselves multi-tenant functionality. Audit them against current upstream Neutron and either restore upstream or keep/propose the generic fix separately:
 
@@ -157,15 +152,14 @@ Multi-tenancy semantics should not depend on a particular hosting topology.
 - [ ] Evaluate build/HMR paths without weakening package validation or AppScope isolation.
 - [ ] Add focused benchmarks before introducing caching that changes compiler or deployment behavior.
 
-## Merge criteria for `version-0.0.1 -> dev`
+## Review criteria
 
-Before opening the eventual pull request:
+Before integration review:
 
-1. All P0 cleanup items required for the intended release scope are complete.
+1. All cleanup items required for the intended scope are complete.
 2. The full naming audit contains no stale higher-level product terminology in production code, tests, scripts, filenames, or repository documentation.
 3. The retirement non-reuse gap is covered by a deployed test.
 4. Standard `.neutron` package compatibility remains intact.
 5. Owner behavior continues to match ordinary Neutron expectations.
 6. Multi-tenant allocation and cross-tenant isolation tests pass.
 7. Every remaining upstream-derived code delta has a documented reason in [UPSTREAM.md](UPSTREAM.md).
-8. `version-0.0.1` is up to date with `dev`.
