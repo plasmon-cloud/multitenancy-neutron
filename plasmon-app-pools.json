@@ -2,7 +2,7 @@
   "apps": [
     {
       "app_id": "hello",
-      "template": "apps/hello_001",
+      "template": "apps/hello_a",
       "name": "Hello",
       "description": "Example Neutron application",
       "capacity": 2

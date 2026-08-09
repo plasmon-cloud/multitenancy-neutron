@@ -44,10 +44,11 @@ import GatewayAuthority "./http_routes/GatewayAuthority";
 import RouteNamespace "./http_routes/Namespace";
 import KernelMemory "./memory/kernel/v3";
 import ActivationMemory "./memory/activation/v1";
-import TenantsMemory "./memory/malstorm_tenants/v1";
+import TenantsMemory "./memory/tenants/v1";
 import AppInstancesMemory "./memory/app_instances/v1";
 import AppInstanceLifecycleMemory "./memory/app_instance_lifecycle/v1";
 import AppCatalogMemory "./memory/app_catalog/v1";
+import AppInstanceAllocation "./app_instances/Allocation";
 import ActivationService "./activation/Service";
 import Array "mo:core/Array";
 import Blob "mo:core/Blob";
@@ -2151,7 +2152,8 @@ module {
             tenant_apps(caller);
         };
 
-        // Returns true when any tenant currently owns this app instance.
+        // Retirement is permanent for a physical pool slot. It is
+        // independent from whether a tenant currently owns that slot.
         func app_instance_retired(appInstanceId : Text) : Bool {
             switch (
                 Map.get(
@@ -2204,6 +2206,7 @@ module {
             app_instance_retired(input.app_instance_id);
         };
 
+        // Returns true when any tenant currently owns this physical instance.
         func app_instance_assigned(appInstanceId : Text) : Bool {
             for ((_, grantedApps) in Map.entries(tenantsMem.grants)) {
                 if (
@@ -2218,6 +2221,28 @@ module {
                 };
             };
             false;
+        };
+
+        // Resolve one tenant's existing physical instance for a logical app.
+        //
+        // Installation is derived from the existing grant and app-instance
+        // registries, keeping persisted grants keyed by physical instance.
+        func tenant_app_instance_for_app(
+            id : Principal,
+            appId : Text,
+        ) : ?Text {
+            AppInstanceAllocation.allocatedInstanceForApp(
+                tenant_apps(id),
+                appInstancesMem.instances,
+                appId,
+                func(appInstanceId : Text) : Bool {
+                    not app_instance_retired(appInstanceId) and
+                    InstallMemory.committedScope(
+                        mem.install,
+                        appInstanceId,
+                    ) != null;
+                },
+            );
         };
 
         // Owner-only through the compiler-generated kernel wrapper.
@@ -2352,6 +2377,19 @@ module {
             Array.sort(result, Text.compare);
         };
 
+        // Self-scoped tenant installation lookup.
+        //
+        // Keep the owner pool-inspection method above unchanged. This query
+        // exposes only the caller's own 0-or-1 physical allocation without
+        // broadening the generic administrative contract.
+        public func /*query:unauthorized*/kernel_my_app_instance_for_app(
+            input : { app_id : Text },
+            /*caller*/ caller : Principal,
+        ) : ?Text {
+            assert(is_session_authorized(caller));
+            tenant_app_instance_for_app(caller, input.app_id);
+        };
+
         // Owner-only logical app catalog listing.
         //
         // Unlike kernel_available_apps this includes exhausted apps so
@@ -2428,10 +2466,12 @@ module {
             };
         };
 
-        // Tenant-facing catalog.
+        // Tenant-facing logical app catalog.
         //
-        // Returns each logical app that currently has at least one registered,
-        // installed and unassigned app instance.
+        // An installed logical app remains visible even when the physical pool
+        // is otherwise exhausted, allowing the shell to render Open instead of
+        // losing the app after installation. Uninstalled apps are shown only
+        // while at least one usable free physical slot exists.
         public func /*query:unauthorized*/kernel_available_apps(
             (),
             /*caller*/ caller : Principal,
@@ -2440,25 +2480,30 @@ module {
 
             var result : [Text] = [];
 
-            for (
-                (appInstanceId, appId)
-                in Map.entries(appInstancesMem.instances)
-            ) {
-                if (
-                    app_catalog_has(appId) and
-                    InstallMemory.committedScope(
-                        mem.install,
-                        appInstanceId,
-                    ) != null and
-                    not app_instance_retired(appInstanceId) and
-                    not app_instance_assigned(appInstanceId) and
-                    not Array.any(
-                        result,
-                        func(existingAppId : Text) : Bool {
-                            existingAppId == appId;
-                        },
-                    )
-                ) {
+            for ((appId, _) in Map.entries(appCatalogMem.apps)) {
+                var visible = tenant_app_instance_for_app(caller, appId) != null;
+
+                if (not visible) {
+                    label pool for (
+                        (appInstanceId, registeredAppId)
+                        in Map.entries(appInstancesMem.instances)
+                    ) {
+                        if (
+                            registeredAppId == appId and
+                            InstallMemory.committedScope(
+                                mem.install,
+                                appInstanceId,
+                            ) != null and
+                            not app_instance_retired(appInstanceId) and
+                            not app_instance_assigned(appInstanceId)
+                        ) {
+                            visible := true;
+                            break pool;
+                        };
+                    };
+                };
+
+                if (visible) {
                     result := Array.concat(result, [appId]);
                 };
             };
@@ -2468,13 +2513,20 @@ module {
 
         // Tenant-facing allocator.
         //
-        // Caller requests only the logical app. The kernel chooses the
-        // lexicographically first registered, installed, unassigned instance.
+        // One principal may have at most one physical instance for a given
+        // logical app. Repeating allocation therefore returns the existing
+        // instance instead of consuming another pool slot. This update contains
+        // no await, so lookup + mutation execute atomically within one message.
         public func /*update:unauthorized*/kernel_app_instance_allocate(
             input : { app_id : Text },
             /*caller*/ caller : Principal,
         ) : ?Text {
             assert(is_session_authorized(caller));
+
+            switch (tenant_app_instance_for_app(caller, input.app_id)) {
+                case (?existing) return ?existing;
+                case null {};
+            };
 
             var selected : ?Text = null;
 
@@ -2492,9 +2544,7 @@ module {
                     not app_instance_assigned(appInstanceId)
                 ) {
                     switch (selected) {
-                        case null {
-                            selected := ?appInstanceId;
-                        };
+                        case null selected := ?appInstanceId;
                         case (?current) {
                             if (Text.compare(appInstanceId, current) == #less) {
                                 selected := ?appInstanceId;
@@ -2526,23 +2576,19 @@ module {
 
         // Owner-only through the compiler-generated kernel authorization
         // wrapper. A grant may target only a currently installed non-kernel app.
+        //
+        // Registered pool instances obey the same one-principal + one-logical-app
+        // installation invariant as the self-service allocator. Generic direct
+        // grants for unregistered Neutron apps retain their previous semantics.
         public func /*update*/kernel_tenant_grant(
             input : {
                 principal : Principal;
                 app_id : Text;
             },
         ) : () {
-            assert(not app_instance_retired(input.app_id));
-            // An app instance belongs to at most one tenant.
-            // Re-granting an instance already owned by this same tenant
-            // remains idempotent.
-            assert(
-                not app_instance_assigned(input.app_id) or
-                tenant_has_app(input.principal, input.app_id)
-            );
-
             assert(SettingsAccess.validPrincipal(input.principal));
             assert(input.app_id != "kernel");
+            assert(not app_instance_retired(input.app_id));
             assert(
                 InstallMemory.committedScope(
                     mem.install,
@@ -2550,14 +2596,38 @@ module {
                 ) != null
             );
 
+            // A physical app instance belongs to at most one tenant.
+            // Re-granting the same instance to the same tenant is idempotent.
+            assert(
+                not app_instance_assigned(input.app_id) or
+                tenant_has_app(input.principal, input.app_id)
+            );
+
+            switch (
+                Map.get(
+                    appInstancesMem.instances,
+                    Text.compare,
+                    input.app_id,
+                )
+            ) {
+                case (?logicalAppId) {
+                    switch (tenant_app_instance_for_app(
+                        input.principal,
+                        logicalAppId,
+                    )) {
+                        case null {};
+                        case (?existing) assert(existing == input.app_id);
+                    };
+                };
+                case null {};
+            };
+
             let current = tenant_apps(input.principal);
 
             if (
                 Array.any(
                     current,
-                    func(appId : Text) : Bool {
-                        appId == input.app_id;
-                    },
+                    func(appId : Text) : Bool { appId == input.app_id },
                 )
             ) return;
 
@@ -4072,6 +4142,9 @@ public type kernel_app_pool_register_Output = ();
 
 public type kernel_app_instances_for_app_Input = (input : { app_id : Text },);
 public type kernel_app_instances_for_app_Output = [Text];
+
+public type kernel_my_app_instance_for_app_Input = (input : { app_id : Text });
+public type kernel_my_app_instance_for_app_Output = ?Text;
 
 public type kernel_app_catalog_list_Input = (());
 public type kernel_app_catalog_list_Output = [Text];

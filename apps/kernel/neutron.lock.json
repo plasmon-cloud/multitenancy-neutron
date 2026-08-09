@@ -20,15 +20,6 @@
       },
       "migrations": {}
     },
-    "malstorm_tenants": {
-      "schemas": {
-        "1": {
-          "hash": "4c5d5fd9e8a43716d8ec7d4dbdc25f0d5b589fe8db3e2e0b75d75125a0c7fb0b",
-          "entry": "b542fa1b13b43f99d28546ad1f66a326e2f0995c51d08050d2ffe7d339f695e3"
-        }
-      },
-      "migrations": {}
-    },
     "app_instances": {
       "schemas": {
         "1": {
@@ -52,6 +43,15 @@
         "1": {
           "hash": "283f81377a4b0f420ca8d999de12a7316e3676bae13d94317a4a57ab9f0e5457",
           "entry": "f7cd5bec99c2b62c980796d80b952d96474c98d50388afaeae459be0e7743c1d"
+        }
+      },
+      "migrations": {}
+    },
+    "tenants": {
+      "schemas": {
+        "1": {
+          "hash": "4c5d5fd9e8a43716d8ec7d4dbdc25f0d5b589fe8db3e2e0b75d75125a0c7fb0b",
+          "entry": "b542fa1b13b43f99d28546ad1f66a326e2f0995c51d08050d2ffe7d339f695e3"
         }
       },
       "migrations": {}

@@ -40,6 +40,7 @@ const interpretedTests = [
   "https_outcalls_service_test.mo",
   "app_usage_service_test.mo",
   "activation_service_test.mo",
+  "app_instance_allocation_test.mo",
   "public_ingress_service_test.mo",
   "install_service_test.mo",
   "randomness_service_test.mo",

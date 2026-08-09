@@ -27,8 +27,16 @@
       devShells = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+          fontsConf = pkgs.makeFontsConf {
+            fontDirectories = [
+              pkgs.dejavu_fonts
+            ];
+          };
+
           linuxPackages = pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.chromium
+            pkgs.fontconfig
+            pkgs.dejavu_fonts
           ];
 
           # Mops is distributed through npm rather than nixpkgs. Expose a
@@ -56,6 +64,7 @@
               if command -v chromium >/dev/null 2>&1; then
                 export PLAYWRIGHT_CHROMIUM_EXECUTABLE="$(command -v chromium)"
               fi
+              export FONTCONFIG_FILE="${fontsConf}"
               export PLAYWRIGHT_CHROMIUM_ARGS="''${PLAYWRIGHT_CHROMIUM_ARGS:---js-flags=--stack-size=16384}"
               echo "Neutron dev shell"
               echo "  bun: $(bun --version 2>/dev/null || echo missing)"

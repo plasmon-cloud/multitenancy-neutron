@@ -18,6 +18,7 @@ import {
 } from "neutron-compiler/src/install.js";
 import {
   install_app,
+  getApps,
   add_app_pool_capacity,
   install_app_pool,
   select_app_pool_package,
@@ -236,10 +237,23 @@ export function Launcher(props: LauncherProps) {
       cancelled = true;
     };
   }, [open, owner, capacityOpen]);
+  // Owners continue to use Neutron's physical app/tile launcher. Tenants
+  // instead see one logical Element row, keeping workspace Tiles separate from
+  // installation/Atom allocation.
   const entries = useMemo(
-    () => launcherEntriesFromApps(visibleApps, query),
-    [visibleApps, query],
+    () => (owner ? launcherEntriesFromApps(visibleApps, query) : []),
+    [visibleApps, query, owner],
   );
+  const tenantElements = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return availableApps;
+
+    return availableApps.filter((app) =>
+      [app.appId, app.name, app.description].some((value) =>
+        value.toLocaleLowerCase().includes(normalized),
+      ),
+    );
+  }, [availableApps, query]);
 
   const selectedCapacityApp = useMemo(
     () =>
@@ -266,6 +280,97 @@ export function Launcher(props: LauncherProps) {
       icon: entry.icon,
     });
     close(true);
+  };
+
+  const appInstanceEntry = (
+    appInstanceId: string,
+    registry = useAppsStore.getState().list,
+  ): LauncherEntry | null => {
+    const registered = registry[appInstanceId];
+    if (!registered) return null;
+
+    return (
+      launcherEntriesFromApps(
+        { [appInstanceId]: registered } as typeof apps,
+        "",
+      )[0] ?? null
+    );
+  };
+
+  const launchAppInstance = async (
+    appInstanceId: string,
+    appName: string,
+  ): Promise<boolean> => {
+    let entry = appInstanceEntry(appInstanceId);
+
+    // Logical app discovery and physical registry loading are independent.
+    // If allocation finishes first, refresh the committed app registry once
+    // rather than failing the launch because the frontend store is stale.
+    if (!entry) {
+      try {
+        const refreshedApps = await getApps();
+        entry = appInstanceEntry(appInstanceId, refreshedApps);
+      } catch (error) {
+        setAllocateError(
+          error instanceof Error
+            ? error.message
+            : `Unable to load ${appName}.`,
+        );
+        return false;
+      }
+    }
+
+    if (!entry) {
+      setAllocateError(
+        `${appName} is installed, but its runtime tile is unavailable.`,
+      );
+      return false;
+    }
+
+    launch(entry);
+    return true;
+  };
+
+  const activateTenantElement = async (
+    app: (typeof availableApps)[number],
+  ): Promise<void> => {
+    // Open is only a workspace operation. Only Install calls the allocator, so
+    // opening the same installed app repeatedly can create multiple Tiles while
+    // all of them still reference the same physical app instance.
+    if (app.appInstanceId !== null) {
+      await launchAppInstance(app.appInstanceId, app.name);
+      return;
+    }
+    if (allocateBusyAppId !== null) return;
+
+    setAllocateBusyAppId(app.appId);
+    setAllocateError(null);
+
+    try {
+      const appInstanceId = await allocateAppInstance(app.appId);
+      if (appInstanceId === null) {
+        setAllocateError(`${app.name} is temporarily unavailable.`);
+        return;
+      }
+
+      // Reflect Install -> Open immediately. The appIds refresh performed by
+      // allocateAppInstance causes the normal catalog effect to re-read the
+      // same persisted installation mapping afterward.
+      setAvailableApps((current) =>
+        current.map((item) =>
+          item.appId === app.appId ? { ...item, appInstanceId } : item,
+        ),
+      );
+      await launchAppInstance(appInstanceId, app.name);
+    } catch (error) {
+      setAllocateError(
+        error instanceof Error
+          ? error.message
+          : `Unable to install ${app.name}.`,
+      );
+    } finally {
+      setAllocateBusyAppId(null);
+    }
   };
 
   const installPackage = async (source: AppInstallSource) => {
@@ -495,14 +600,18 @@ export function Launcher(props: LauncherProps) {
         <div className="launcher-search">
           <IoSearch aria-hidden="true" />
           <input
-            aria-label="Search app tiles"
+            aria-label={owner ? "Search app tiles" : "Search Elements"}
             ref={inputRef}
             data-tid={testId("launcher-search")}
             value={query}
-            placeholder="Search tiles"
+            placeholder={owner ? "Search tiles" : "Search Elements"}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && entries[0]) launch(entries[0]);
+              if (event.key !== "Enter") return;
+              if (owner && entries[0]) launch(entries[0]);
+              else if (!owner && tenantElements[0]) {
+                void activateTenantElement(tenantElements[0]);
+              }
             }}
           />
         </div>
@@ -953,79 +1062,73 @@ export function Launcher(props: LauncherProps) {
 
           {!owner ? (
             <>
-              {availableApps.map((app) => (
-                <div
-                  className="launcher-tile-row"
-                  key={`available-${app.appId}`}
-                >
-                  <button
-                    type="button"
-                    className="launcher-tile"
-                    aria-label={`Create new ${app.name} Atom`}
-                    disabled={allocateBusyAppId !== null}
-                    onClick={() => {
-                      if (allocateBusyAppId !== null) return;
+              {tenantElements.map((app) => {
+                const installed = app.appInstanceId !== null;
+                const installedEntry = installed
+                  ? appInstanceEntry(app.appInstanceId!)
+                  : null;
+                const busy = allocateBusyAppId === app.appId;
 
-                      setAllocateBusyAppId(app.appId);
-                      setAllocateError(null);
-
-                      void allocateAppInstance(app.appId)
-                        .then((appInstanceId) => {
-                          if (appInstanceId === null) {
-                            setAllocateError(
-                              `${app.name} is temporarily unavailable.`,
-                            );
-                          }
-                        })
-                        .catch((error) => {
-                          setAllocateError(
-                            error instanceof Error
-                              ? error.message
-                              : `Unable to allocate ${app.name}.`,
-                          );
-                        })
-                        .finally(() => {
-                          setAllocateBusyAppId(null);
-                        });
-                    }}
+                return (
+                  <div
+                    className="launcher-tile-row"
+                    key={`element-${app.appId}`}
                   >
-                    <span
-                      aria-hidden="true"
-                      className="launcher-install-icon"
+                    <button
+                      type="button"
+                      className="launcher-tile"
+                      aria-label={`${installed ? "Open" : "Install"} ${app.name}`}
+                      data-tid={testId(`launcher-element-${app.appId}`)}
+                      data-state={installed ? "open" : "install"}
+                      disabled={allocateBusyAppId !== null}
+                      onClick={() => { void activateTenantElement(app); }}
                     >
-                      <IoAdd />
-                    </span>
-
-                    <span
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "0.15rem",
-                        minWidth: 0,
-                        textAlign: "left",
-                      }}
-                    >
-                      <span className="launcher-tile-title">
-                        {allocateBusyAppId === app.appId
-                          ? `Creating ${app.name}...`
-                          : app.name}
-                      </span>
+                      {installedEntry ? (
+                        <img src={installedEntry.icon} alt="" />
+                      ) : (
+                        <span aria-hidden="true" className="launcher-install-icon">
+                          <IoAdd />
+                        </span>
+                      )}
 
                       <span
                         style={{
-                          fontSize: "0.75rem",
-                          opacity: 0.72,
-                          whiteSpace: "normal",
-                          overflowWrap: "anywhere",
-                          lineHeight: 1.25,
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "0.15rem",
+                          minWidth: 0,
+                          textAlign: "left",
                         }}
                       >
-                        {app.description || "Create a new Atom"}
+                        <span className="launcher-tile-title">
+                          {busy ? `Installing ${app.name}...` : app.name}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "0.75rem",
+                            opacity: 0.72,
+                            whiteSpace: "normal",
+                            overflowWrap: "anywhere",
+                            lineHeight: 1.25,
+                          }}
+                        >
+                          {app.description ||
+                            (installed ? "Installed" : "Install this Element")}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "0.7rem",
+                            fontWeight: 600,
+                            opacity: 0.8,
+                          }}
+                        >
+                          {installed ? "Open" : "Install"}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                </div>
-              ))}
+                    </button>
+                  </div>
+                );
+              })}
             </>
           ) : null}
 
@@ -1090,8 +1193,10 @@ export function Launcher(props: LauncherProps) {
               </div>
             );
           })}
-          {entries.length === 0 ? (
-            <div className="launcher-empty">No matching tiles</div>
+          {(owner ? entries.length === 0 : tenantElements.length === 0) ? (
+            <div className="launcher-empty">
+              {owner ? "No matching tiles" : "No matching Elements"}
+            </div>
           ) : null}
         </div>
       </div>

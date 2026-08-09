@@ -4,9 +4,10 @@ import Principal "mo:core/Principal";
 module {
     // Tenant -> assigned physical app instance ids.
     //
-    // Intentionally simple for v1. Typical tenants will have only a
-    // handful of grants, so copying/scanning a small [Text] is preferable
-    // to introducing more complicated persistent structures.
+    // Physical ids are the stored representation. Uniqueness for
+    // (principal, logical app) is derived through memory/app_instances/v1.
+    // Typical tenants have only a handful of grants, so copying/scanning a
+    // small [Text] remains preferable to a more complicated stable structure.
     public type Mem = {
         grants : Map.Map<Principal, [Text]>;
     };

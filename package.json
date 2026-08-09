@@ -30,11 +30,11 @@
     "package": "npm --workspace neutron-kernel run package && npm --workspace neutron-hello run package && npm --workspace neutron-kitchensink run package && npm --workspace neutron-gemma run package && npm --workspace neutron-vfs run package && npm --workspace neutron-wagyu run package && npm --workspace neutron-spreadsheet run package && npm --workspace neutron-agent run package && npm --workspace neutron-chess run package && npm --workspace neutron-jetcreeper run package && npm --workspace neutron-contacts run package && npm --workspace neutron-mail run package && npm --workspace neutron-wallet run package && npm --workspace neutron-mysubnet run package && npm --workspace neutron-vetkeys-fixture run package",
     "security:check": "npm --workspace neutron-security run check",
     "typecheck": "tsc -b --pretty false",
-    "plasmon:generate": "bun plasmon-capacity.ts",
+    "plasmon:generate": "npm --workspace neutron-design-system run build && npm --workspace neutron-hello-a run package && npm --workspace neutron-demo-001 run package && bun plasmon-capacity.ts",
     "plasmon:serve": "npm run plasmon:generate && npm run provision -- plasmon.ndeploy.json serve",
     "plasmon:deploy": "npm run plasmon:generate && bun plasmon-provision.ts plasmon.ndeploy.json reinstall",
     "plasmon:status": "npm run provision -- plasmon.ndeploy.json status",
-    "plasmon:test": "NEUTRON_NDEPLOY_CONFIG=plasmon.ndeploy.json playwright test test/e2e/local-kernel.spec.ts --grep \"Plasmon tenants cannot cross owner or allocation boundaries\""
+    "plasmon:test": "NEUTRON_NDEPLOY_CONFIG=plasmon.ndeploy.json playwright test test/e2e/local-kernel.spec.ts --grep \"Plasmon (tenants cannot cross owner or allocation boundaries|tenant launcher installs once and reopens the same Element)\""
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

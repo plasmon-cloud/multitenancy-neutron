@@ -27,7 +27,7 @@ test("the current authorization response remains usable", async () => {
   });
 });
 
-test("an unauthorized identity enrolls as a Plasmon tenant before continuing", async () => {
+test("an unauthorized identity enrolls as a tenant before continuing", async () => {
   const source = await readFile(
     new URL("../src/reducer/auth.ts", import.meta.url),
     "utf8",
@@ -43,7 +43,7 @@ test("an unauthorized identity enrolls as a Plasmon tenant before continuing", a
   expect(enrollmentFlow).toContain("kernel_tenant_join(null)");
   expect(enrollmentFlow).toContain("kernel_check_authorized(null)");
   expect(enrollmentFlow).toContain(
-    "Unable to enroll this principal as a Plasmon tenant.",
+    "Unable to enroll this principal as a tenant.",
   );
   expect(enrollmentFlow).not.toContain("window.location");
   expect(source).not.toContain("ICP_DISPENSER_URL");
