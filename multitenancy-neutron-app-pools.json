@@ -1,0 +1,18 @@
+{
+  "apps": [
+    {
+      "app_id": "hello",
+      "template": "apps/hello_a",
+      "name": "Hello",
+      "description": "Example Neutron application",
+      "capacity": 2
+    },
+    {
+      "app_id": "demo",
+      "template": "apps/demo_001",
+      "name": "Demo",
+      "description": "Second test application",
+      "capacity": 2
+    }
+  ]
+}
