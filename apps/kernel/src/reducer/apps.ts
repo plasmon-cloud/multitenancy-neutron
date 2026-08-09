@@ -1935,7 +1935,7 @@ export async function select_app_pool_package():
     neutronConfig.id === "kernel" ||
     preparedPackage.isKernel
   ) {
-    throw new Error("The Kernel cannot be published as an Element");
+    throw new Error("The Kernel cannot be published as an app pool");
   }
 
   return {
@@ -1955,7 +1955,7 @@ function physicalAppInstanceId(
 }
 
 function appPoolTemplatePath(logicalAppId: string): string {
-  return `/plasmon/templates/${logicalAppId}.neutron`;
+  return `/multitenancy-neutron/templates/${logicalAppId}.neutron`;
 }
 
 async function readRetainedAppPoolTemplate(
@@ -1967,7 +1967,7 @@ async function readRetainedAppPoolTemplate(
 
   if (!response.ok) {
     throw new Error(
-      `No retained package template is available for Element ${logicalAppId}`,
+      `No retained package template is available for app ${logicalAppId}`,
     );
   }
 
@@ -2078,8 +2078,9 @@ function clonePackageForPhysicalApp(
 
 /*
  * Install one logical application as a pool of isolated physical app
- * instances. Product terminology (Element/Atom) deliberately stays outside
- * this generic runtime implementation.
+ * instances. The runtime and persistence model uses generic app identities
+ * throughout; higher-level products can assign their own terminology outside
+ * this repository.
  */
 export async function install_app_pool({
   pkg,
@@ -2415,7 +2416,7 @@ export async function add_app_pool_capacity({
   }
 
   if (!logicalAppId) {
-    throw new Error("Element id cannot be empty");
+    throw new Error("App id cannot be empty");
   }
 
   const pkg = await readRetainedAppPoolTemplate(logicalAppId);
@@ -2441,13 +2442,13 @@ export async function add_app_pool_capacity({
 
   if (existingIds.length === 0) {
     throw new Error(
-      `Element ${logicalAppId} is not currently published`,
+      `App ${logicalAppId} is not currently published`,
     );
   }
 
   if (metadata.length === 0) {
     throw new Error(
-      `Element ${logicalAppId} has no registered catalog metadata`,
+      `App ${logicalAppId} has no registered catalog metadata`,
     );
   }
 
