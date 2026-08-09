@@ -1,907 +1,468 @@
-# Plasmon Architecture
+# multitenancy-neutron architecture
 
 ## 1. Purpose
 
-Plasmon is a multi-user personal application cloud built on the **Neutron** kernel/runtime.
+`multitenancy-neutron` extends Neutron so one kernel can host mutually isolated tenant sessions and allocate ordinary Neutron applications from shared physical capacity.
 
-Its product model is inspired by Sandstorm grains: applications define small, independently owned and shared units of data rather than treating the entire application as one user object. Plasmon calls those units **Atoms**.
+The design deliberately stays inside Neutron's existing execution and package model:
 
-Neutron provides the execution, persistence, authorization, and application-scope substrate. Plasmon defines the higher-level application, object, ownership, sharing, and workspace model above it.
+- physical applications remain normal Neutron applications;
+- execution authority remains a Neutron `AppScope`;
+- `.neutron` remains the package format;
+- the kernel owner retains normal Neutron administrative authority;
+- multi-tenancy adds tenant membership, grants, logical app discovery, allocation, lifecycle state, and tenant-scoped browser state.
 
-A critical architectural distinction is:
+The repository does not define higher-level product objects. External systems may map their own terminology onto these primitives without changing the kernel model.
 
-```text
-Plasmon Atom != Neutron app_instance
-```
+For the file-level divergence policy, see [UPSTREAM.md](../UPSTREAM.md).
 
-A Neutron `app_instance` / `AppScope` is a physical execution and authorization primitive. An Atom is a porter-defined user object or grain. Phase 9 proves the physical substrate; Phase 10 defines the first real Atom model.
+## 2. Branch and compatibility model
 
-## 2. Terminology and naming convention
+`dev` is the integration base for version work in this repository. `version-0.0.1` is developed against `dev` and is intended to merge back into it.
 
-### 2.1 Product model
+Current upstream Neutron `main` is a separate reference. It is used to answer a different question: how much of each upstream-derived file can remain identical to Neutron?
 
-```text
-Plasmon
-└── Element
-    ├── Isotope
-    └── Atoms created with the Element
-```
-
-- **Plasmon** — the platform/personal application cloud.
-- **Element** — a logical application/package exposed to users, such as Notepad, Wekan, or Git.
-- **Isotope** — a particular version/build/runtime profile of an Element.
-- **Atom** — a porter-defined isolated unit created with an Element, usually the smallest independently owned/shared data object that makes sense for that application.
-- **Neutron** — the kernel/runtime substrate.
-- **Tenant** — a user/principal using Plasmon.
-- **Grant** — authorization relating a principal to a Neutron execution scope or, in future product APIs, to a specific Atom capability.
-- **Shard** — one Neutron canister participating in a Plasmon deployment.
-
-An Atom is modeled after a **Sandstorm grain**. Sandstorm's developer handbook describes a grain as a discrete collection of data whose granularity is chosen by the person porting the app, with the rule of thumb that it should usually be the smallest useful **unit of sharing**.
-
-Examples include:
+Those two comparisons should not be confused:
 
 ```text
-Element                    Atom / grain
--------------------------  -------------------------
-document editor            one document
-spreadsheet editor         one spreadsheet
-Wekan / kanban             one board
-Git application            one repository
-blogging application       one blog
-chat application           one chat room
-mail application           one mailbox
-notebook application       one notebook
-photo gallery              one photo album
-image editor               one image
+version branch -> dev
+    repository integration relationship
+
+version branch -> upstream Neutron main
+    compatibility and conflict-minimization relationship
 ```
 
-The porter chooses the boundary. Plasmon does not impose one universal Atom granularity.
+## 3. Terminology
 
-Sandstorm references:
+### Tenant
 
-- https://docs.sandstorm.io/en/latest/developing/handbook/
-- https://sandstorm.io/how-it-works
-- https://docs.sandstorm.io/en/latest/vagrant-spk/packaging-tutorial/
+A principal that has joined the multi-tenant kernel. Tenant membership exists even when the tenant currently owns no app instances.
 
-### 2.2 Installing an Element is not creating an Atom
+### Logical app
 
-Installing or making an Element available to a tenant and creating an Atom are separate operations.
-
-For example:
+The tenant-facing application identity stored in the app catalog, for example:
 
 ```text
-Tenant installs Notepad once
-        ↓
-Create document "Shopping list"
-        ↓
-Atom A
-
-Create document "Project notes"
-        ↓
-Atom B
-
-Create document "Meeting notes"
-        ↓
-Atom C
+hello
 ```
 
-One installed Element may therefore create zero, one, or many Atoms.
+A logical app describes what application a tenant can install/open. It is not itself an execution scope.
 
-This mirrors Sandstorm's model where a user installs an application and then creates multiple grains of that application.
+### Physical app instance
 
-### 2.3 Isotope relationship
+A real Neutron application identity compiled into the combined actor, for example:
 
-An Atom is created using some Isotope of an Element.
+```text
+hello_001
+hello_002
+```
+
+Each physical app instance has its own ordinary Neutron AppScope and therefore its own physical runtime identity.
+
+For the current proof of concept, the physical app id and the allocated instance id are the same identifier.
+
+### App pool
+
+The set of physical app instances registered to one logical app.
+
+### Grant
+
+A persisted relationship from a tenant principal to a physical app-instance id. Grants are the tenant's execution authorization inventory.
+
+### Allocation
+
+The operation that finds or assigns one usable physical app instance from a logical app's pool to a tenant.
+
+### Retirement
+
+Permanent exclusion of a physical app instance from future allocation.
+
+### Workspace and tile
+
+Frontend views. Opening, closing, moving, or duplicating tiles does not allocate additional physical app instances.
+
+## 4. Execution model
+
+Neutron already compiles installed applications into one combined Internet Computer actor. `multitenancy-neutron` keeps that architecture.
+
+A physical app instance is therefore not a container or a second canister. It is an ordinary Neutron application identity inside the kernel actor with its own AppScope.
 
 Conceptually:
 
 ```text
-Element: Notepad
-├── Isotope: stable 1.0
-│   ├── Atom: Shopping list
-│   └── Atom: Project notes
-└── Isotope: beta 1.1
-    └── Atom: Beta-test document
+kernel canister
+  |
+  +-- kernel
+  +-- hello_001   AppScope A
+  +-- hello_002   AppScope B
+  +-- demo_001    AppScope C
+  +-- demo_002    AppScope D
 ```
 
-The implementation does not yet maintain a complete first-class Isotope registry. Package/version/build metadata is currently the implementation-level precursor.
+A tenant receives a grant to exactly one of those physical identities. Existing Neutron capability and physical-name machinery then provides the execution boundary.
 
-### 2.4 Implementation terminology
+This is intentionally different from introducing a second logical authorization layer around application methods. Logical app ids are for catalog/allocation decisions. Physical AppScopes remain authoritative for execution.
 
-Generic Neutron production code should normally use:
+## 5. Data model
+
+The current implementation adds four kernel stable-memory roots.
+
+### `tenants`
 
 ```text
-app
-app_id
-app_instance
-app_instance_id
-tenant
+principal -> [physical app_instance_id]
+```
+
+Responsibilities:
+
+- record tenant membership;
+- store exact physical grants;
+- permit an empty grant list so membership is independent of installed apps.
+
+A logical installation record is not duplicated here. Logical identity is derived through `app_instances`.
+
+### `app_instances`
+
+```text
+physical app_instance_id -> logical app_id
+```
+
+Responsibilities:
+
+- associate physical Neutron application identities with one logical catalog app;
+- allow the allocator to determine whether a tenant already has an instance of a logical app;
+- separate catalog identity from execution identity.
+
+### `app_instance_lifecycle`
+
+```text
+physical app_instance_id -> retired
+```
+
+Responsibilities:
+
+- persist permanent non-reuse state;
+- prevent retired instances from being selected by allocation;
+- keep lifecycle state independent from current tenant ownership.
+
+### `app_catalog`
+
+```text
+logical app_id -> { name, description }
+```
+
+Responsibilities:
+
+- provide tenant-facing logical application discovery;
+- preserve catalog metadata independently of physical capacity;
+- allow owner administration to inspect logical apps even when their pools are exhausted.
+
+## 6. Allocation invariant
+
+The central invariant is:
+
+```text
+(principal, logical app) -> zero or one usable physical app instance
+```
+
+Allocation must be persistent, idempotent, and deterministic.
+
+### Existing allocation
+
+Given a principal and logical app:
+
+1. read the tenant's physical grants;
+2. map each granted physical id through `app_instances`;
+3. retain instances registered to the requested logical app;
+4. reject unusable instances, including retired or no-longer-installed physical ids;
+5. if historical state contains more than one candidate, choose deterministically.
+
+The current deterministic tie-break is lexical physical id order.
+
+### New allocation
+
+When no usable existing allocation exists:
+
+1. enumerate physical instances registered to the logical app;
+2. require that the instance is currently installed;
+3. require that it is not retired;
+4. require that it is not assigned to another tenant;
+5. choose the deterministic lowest candidate;
+6. append that physical id to the caller's grants.
+
+The allocator contains no `await` between candidate selection and grant mutation, so the lookup and write execute atomically within the canister message.
+
+Repeating the same allocation returns the existing physical id rather than consuming a new pool slot.
+
+## 7. Authorization model
+
+There are two distinct authorization concepts.
+
+### Owner authorization
+
+The kernel's ordinary Neutron authorized-principal set continues to define administrative authority.
+
+Owner operations include physical deployment and administrative catalog/pool operations. Multi-tenant membership must not weaken or replace this boundary.
+
+### Tenant session authorization
+
+A principal is session-authorized when either:
+
+- it is a Neutron owner; or
+- it has a tenant entry.
+
+Tenant self-enrollment creates an empty tenant grant list. It does not add the caller to Neutron's owner authorization set.
+
+### App authorization
+
+For a non-owner tenant, a physical AppScope is authorized only when the exact physical app id is present in that principal's grants.
+
+Conceptually:
+
+```text
+owner:
+    all ordinary owner-authorized kernel/app operations
+
+tenant:
+    session APIs
+    + exact granted physical AppScopes
+    - owner administration
+    - another tenant's AppScopes
+```
+
+Knowledge of a physical app-instance id is never sufficient authority.
+
+## 8. Catalog visibility
+
+The tenant-facing logical app catalog has two visibility cases.
+
+An app is visible when:
+
+1. the tenant already owns a usable physical instance of that logical app; or
+2. at least one usable, unassigned physical pool instance is available.
+
+The first rule ensures an installed logical app remains visible as `Open` even when every remaining physical slot has been allocated.
+
+An unallocated tenant should not be offered an app whose pool has no available capacity.
+
+## 9. Launcher behavior
+
+The tenant launcher presents logical apps rather than the raw physical registry.
+
+For each logical app:
+
+```text
+no allocation -> Install
+allocation    -> Open
+```
+
+`Install` invokes the allocator. `Open` does not.
+
+A tenant may open multiple workspace tiles for the same logical app. All such tiles use the same physical app instance because workspace tiles are views, not allocations.
+
+### Registry-refresh race
+
+Logical allocation state and the frontend's loaded physical app registry are obtained independently. Immediately after a successful allocation, the newly allocated physical app may not yet exist in the current frontend store.
+
+The launcher therefore:
+
+1. looks for the physical app in the current registry;
+2. if absent, performs exactly one authoritative `getApps()` refresh;
+3. retries the physical lookup;
+4. fails visibly if the instance is still unavailable.
+
+Do not replace this with sleeps, polling loops, or arbitrary retries.
+
+## 10. App pools and publication
+
+The current owner workflow can take an ordinary `.neutron` package and derive multiple physical package identities in memory.
+
+For a logical app `hello`, capacity 4 currently produces identities such as:
+
+```text
+hello_001
+hello_002
+hello_003
+hello_004
+```
+
+The process rewrites only identity-bearing package metadata for each physical clone, then compiles/deploys the resulting package batch through Neutron's normal compiler/deployment path.
+
+After the deployment is committed, the logical catalog entry and physical-instance mappings are registered with the kernel.
+
+A retained copy of the original logical package is stored at a repository-specific kernel asset path so additional capacity can later be derived from the same package.
+
+Current path:
+
+```text
+/multitenancy-neutron/templates/<logical-app-id>.neutron
+```
+
+### Current limitation
+
+The proof-of-concept app-pool publication path rejects application packages with dependencies. This is not a package-format restriction. Standard `.neutron` compatibility remains a requirement; the pool compiler path needs to be extended to reproduce dependency graphs safely for multiple physical identities.
+
+## 11. Retirement lifecycle
+
+Retirement is stronger than revocation.
+
+### Revocation
+
+Removes a physical app instance from a tenant's grants. A non-retired physical slot may become allocatable again.
+
+### Retirement
+
+Marks the physical app instance as permanently unusable and removes the tenant grant. The id must never be selected by future allocation.
+
+Required lifecycle regression:
+
+```text
+allocate X
+retire X
+allocate the same logical app again
+new allocation != X
+```
+
+This deployed regression is a known test gap for the current version branch.
+
+## 12. Browser workspace isolation
+
+Workspace state is browser-local but still tenant-sensitive.
+
+Persistence keys are scoped by both the kernel canister and authenticated principal:
+
+```text
+neutron-kernel-workspaces-v2:<canisterId>:<principal>
+```
+
+On identity change, the active persistence scope changes before tenant workspace state is loaded.
+
+The legacy unscoped key:
+
+```text
+neutron-kernel-workspaces-v2
+```
+
+must not be migrated into a scoped tenant workspace because a shared browser/origin may have previously been used by another principal.
+
+Workspace persistence is best-effort local storage. It is not the source of allocation or authorization truth.
+
+## 13. Persistence and upgrades
+
+Stable-memory root names, field layouts, and stored identifier semantics become compatibility contracts once real deployments are expected to upgrade in place.
+
+Current roots:
+
+```text
+tenants
+app_instances
+app_instance_lifecycle
+app_catalog
+```
+
+Changing any of the following requires explicit migration once upgrade compatibility is promised:
+
+- root names;
+- v1 record/map layouts;
+- meaning of physical ids;
+- meaning of logical ids;
+- relationships between grants and physical identities.
+
+Generated actor wrappers and lock metadata must be regenerated through the normal Neutron toolchain after source/schema changes. They should not be hand-edited as a migration mechanism.
+
+## 14. Package compatibility
+
+`multitenancy-neutron` does not define a replacement application package format.
+
+A standard upstream-compatible `.neutron` package must remain installable through the ordinary Neutron path. Multi-tenant pool functionality is layered around normal package preparation, compilation, deployment, and AppScope generation.
+
+This requirement is important for two reasons:
+
+1. the repository should inherit future Neutron application compatibility rather than maintain a forked ecosystem;
+2. higher-level control planes should not need a special runtime package solely because the target host is multi-tenant.
+
+## 15. Deployment topology
+
+The tenant/allocation model is intentionally independent of deployment topology.
+
+The current development helpers can describe one or more host nodes, but host/shard selection is infrastructure policy rather than part of the core tenant data model.
+
+A future multi-host allocator may need capacity discovery and placement policy, but those concerns should not change the meaning of:
+
+```text
 principal
+logical app
+physical app instance
+AppScope
 grant
-allocation
-runtime
+retirement
 ```
 
-Plasmon-specific code and documentation may use:
+## 16. Upstream conflict minimization
+
+The long-term maintenance goal is not merely working multi-tenancy. It is a small, reviewable delta from Neutron.
+
+For every upstream-derived file changed by `multitenancy-neutron`:
+
+1. compare it with current upstream Neutron;
+2. restore upstream code exactly where no multi-tenant behavior is required;
+3. move multi-tenant implementation into repository-owned modules where practical;
+4. leave a small, explicit integration seam in the upstream-derived file;
+5. protect the seam with focused tests.
+
+The largest current conflict hotspots are:
 
 ```text
-Element
-Isotope
-Atom
-atom_id
-porter
-shard
+apps/kernel/backend/main.mo
+apps/kernel/src/reducer/apps.ts
+apps/kernel/src/reducer/auth.ts
+apps/kernel/src/workspace/Launcher.tsx
+apps/kernel/src/workspace/KernelTrayItem.tsx
+apps/kernel/src/workspace/store.ts
 ```
 
-Do **not** mechanically translate `Atom` to `app_instance`. The two concepts are intentionally distinct.
+See [UPSTREAM.md](../UPSTREAM.md) for the current classification and [TODO.md](../TODO.md) for the extraction plan.
 
-### 2.5 Stable-memory naming
+## 17. Test invariants
 
-The Phase 9 tenant memory was renamed before merge to the generic identity:
+The multi-tenant test suite must preserve all of the following:
+
+- tenants can join without becoming owners;
+- owners retain ordinary administrative authority;
+- tenants cannot invoke owner-only deployment authority;
+- repeated allocation of one logical app returns the same physical instance;
+- different logical apps allocate independently;
+- different tenants receive distinct physical instances when using the same logical app pool;
+- tenant grants do not overlap for an allocated physical instance;
+- allocation survives actor/client recreation;
+- the owning tenant can call its physical AppScope;
+- another tenant cannot call that AppScope;
+- launcher `Install -> Open` does not allocate twice;
+- reopening and browser reload preserve the same physical allocation;
+- workspace persistence does not cross principal boundaries;
+- retired physical instances are never reused.
+
+Ordinary upstream Neutron package, owner, compiler, and runtime tests remain additional compatibility gates rather than being replaced by these tests.
+
+## 18. Current architectural cleanup target
+
+The current branch proves the behavior but still places too much multi-tenant implementation directly inside upstream-derived files.
+
+The intended cleanup shape is:
 
 ```text
-memory id: tenants
-source: memory/tenants/v1.mo
+upstream-derived Neutron code
+        |
+        +-- small explicit integration seams
+                |
+                v
+multitenancy-neutron-owned modules
+        |
+        +-- tenant/session logic
+        +-- catalog + pool logic
+        +-- allocation + lifecycle logic
+        +-- tenant UI variants
+        +-- focused persistence helpers
 ```
 
-Because this identity has not yet shipped in the target branch, no compatibility migration is required for that rename.
-
-Once a stable-memory identity ships, future identity changes require an explicit migration/compatibility plan.
-
-## 3. Product object model versus execution substrate
-
-The intended Plasmon object model looks like this:
-
-```text
-Plasmon
-├── Element: Notepad
-│   ├── Atom: "Shopping list"       (document)
-│   ├── Atom: "Project notes"       (document)
-│   └── Atom: "Meeting 2026-08-09"  (document)
-├── Element: Wekan
-│   ├── Atom: "Home remodel"        (board)
-│   └── Atom: "Release plan"        (board)
-└── Element: Git
-    └── Atom: "my-project"           (repository)
-```
-
-The current Phase 9 Neutron substrate looks different:
-
-```text
-Neutron shard/canister
-├── kernel
-├── logical app: hello
-│   ├── physical app_instance: hello_001
-│   └── physical app_instance: hello_002
-└── logical app: demo
-    ├── physical app_instance: demo_001
-    └── physical app_instance: demo_002
-```
-
-The `hello_001`-style identifiers above are **physical execution slots**, not Atoms. Hello has no meaningful porter-defined grain/object model yet.
-
-Phase 9 intentionally proves physical allocation, persistence, and AppScope authorization before Plasmon defines the Atom layer.
-
-## 4. Deployment topology
-
-### 4.1 Default topology
-
-The default production model is one shared Neutron canister:
-
-```text
-Internet Computer
-└── Plasmon shared shard
-    └── Neutron combined actor
-        ├── kernel
-        ├── hello_001
-        ├── hello_002
-        ├── notepad_001
-        ├── notepad_002
-        └── ...
-```
-
-These installed identities are Neutron physical app instances / AppScopes.
-
-The system should add shards only when the current shard approaches practical limits.
-
-### 4.2 Future topology
-
-```text
-Plasmon
-├── shared shard A
-│   ├── many tenants
-│   └── many physical app instances
-├── shared shard B
-│   └── overflow execution capacity
-└── dedicated shard
-    └── future paid/high-demand tenant or workload
-```
-
-The product UX should eventually hide shard placement from normal tenants and from normal Atom operations.
-
-## 5. Neutron execution model
-
-Neutron statically assembles the kernel and installed application modules into one Motoko actor.
-
-For each physical app identity, the compiler creates a distinct AppScope and generated wrapper surface.
-
-Conceptually:
-
-```text
-logical Neutron app: notepad
-
-physical execution instances:
-notepad_001 → AppScope(notepad_001)
-notepad_002 → AppScope(notepad_002)
-notepad_003 → AppScope(notepad_003)
-```
-
-Physical app identities must therefore exist when the combined actor is compiled.
-
-Adding physical execution capacity currently requires:
-
-1. generating new physical app identities;
-2. compiling a new combined actor containing them;
-3. self-upgrading the Neutron canister;
-4. registering the new physical instances in the logical app registry.
-
-Neutron's current installed-app bound around 256 is treated as a tested product-scale limit, not an Internet Computer protocol limit. Raising it requires scale validation.
-
-### 5.1 Atom mapping is not yet defined
-
-Phase 9 does **not** decide how many Atoms map to one physical `app_instance` / AppScope.
-
-Phase 10 must explicitly define the mapping.
-
-The strongest Sandstorm-like candidate is:
-
-```text
-1 Atom ↔ 1 AppScope
-```
-
-because Sandstorm isolates each grain independently. However, that mapping has major implications for precompiled capacity, shard scale, creation latency, and upgrade mechanics, so it must be proven rather than assumed.
-
-If Plasmon allows any other mapping, it must still preserve independent Atom ownership, sharing, persistence, and security boundaries.
-
-## 6. Logical registries
-
-Plasmon introduces logical state above physical Neutron app identities.
-
-### 6.1 Element catalog
-
-The current Element catalog stores logical metadata:
-
-```text
-app_id
-name
-description
-```
-
-Example:
-
-```text
-app_id: notepad
-name: Notepad
-description: Private personal notes
-```
-
-### 6.2 Physical app-instance registry
-
-The current physical registry maps a physical Neutron app instance to its logical app:
-
-```text
-notepad_001 → notepad
-notepad_002 → notepad
-notepad_003 → notepad
-```
-
-This is **not the Atom registry**.
-
-It exists to support physical execution allocation and capacity management.
-
-### 6.3 Future Atom registry
-
-Phase 10 should introduce the first real Atom identity model. At minimum, an Atom needs enough persistent identity to support:
-
-```text
-atom_id
-logical Element / app_id
-porter-defined object noun/type
-owner principal
-execution mapping
-human title/name
-lifecycle state
-```
-
-Future sharing metadata can then attach to the Atom boundary rather than to an entire Element.
-
-### 6.4 Atomic physical-pool registration
-
-The owner-only `kernel_app_pool_register` operation currently registers:
-
-- logical `app_id`;
-- display name;
-- description;
-- one or more physical `app_instance_ids`.
-
-All physical instances are validated before registry mutation.
-
-The registration call is intentionally performed after a successful Neutron deployment because the registry must not point at physical scopes that were never installed.
-
-That creates a small split boundary: deployment may commit before registry registration. A future recovery/reconciliation path must handle this deterministically.
-
-## 7. Tenant model
-
-A tenant is identified by an Internet Computer principal.
-
-Tenant membership is independent from Atom ownership and independent from physical app grants.
-
-Conceptually, Phase 9 currently has:
-
-```text
-tenant principal
-    ↓
-persistent physical grant list
-    ↓
-Neutron app_instance IDs
-```
-
-Example:
-
-```text
-Alice principal
-├── notepad_001
-└── demo_002
-
-Bob principal
-└── notepad_002
-```
-
-This state proves the execution authorization substrate. Phase 10 must layer Atom ownership on top of it rather than relabeling these physical grants as Atoms.
-
-## 8. Authorization
-
-### 8.1 Owner authorization
-
-Neutron owners retain global kernel authority.
-
-Kernel/admin operations continue to use owner authorization.
-
-Examples include:
-
-- kernel install/update operations;
-- logical pool registration;
-- owner grant/revoke tooling;
-- physical capacity administration.
-
-### 8.2 Tenant session authorization
-
-A tenant session is recognized when the caller is an owner or a registered tenant.
-
-This allows a tenant with zero physical app grants and zero Atoms to enter Plasmon.
-
-### 8.3 Physical AppScope authorization
-
-For a non-kernel app method, the generated wrapper checks authorization against the exact physical AppScope.
-
-Conceptually:
-
-```text
-caller Alice
-scope notepad_001
-→ allowed only if Alice has that physical grant
-
-caller Alice
-scope notepad_002
-→ rejected if notepad_002 belongs to Bob
-```
-
-The frontend is not the security boundary. Launcher filtering improves UX, but backend AppScope authorization remains authoritative.
-
-### 8.4 Future Atom authorization
-
-Atom ownership/sharing must be scoped to the specific Atom.
-
-Desired property:
-
-```text
-access to Atom A
-!= access to every Atom of the same Element
-```
-
-For the Phase 10 Notepad proof, access to document A must not imply access to document B.
-
-If Atom-to-AppScope mapping is 1:1, Neutron's exact AppScope authorization can directly enforce that boundary. If the mapping is not 1:1, Plasmon needs an equally strong Atom-specific capability/authorization layer.
-
-## 9. Phase 9 physical allocation
-
-Phase 9 allocation operates on logical apps, not on Atoms.
-
-The caller requests:
-
-```text
-app_id = hello
-```
-
-The kernel selects a physical app instance that is:
-
-- registered under that logical app;
-- installed in the current Neutron actor;
-- not retired;
-- not assigned to another tenant.
-
-The current allocator selects the lexicographically first qualifying physical instance.
-
-Example:
-
-```text
-free physical instances: hello_001, hello_002
-
-Alice requests hello
-→ hello_001
-
-Bob requests hello
-→ hello_002
-```
-
-Phase 9 also enforces:
-
-```text
-(principal, logical app) -> zero or one physical app_instance
-```
-
-Repeated allocation returns the existing physical instance instead of consuming another physical slot.
-
-This is an installation/execution-allocation invariant only. It must **not** be interpreted as:
-
-```text
-(principal, Element) -> exactly one Atom
-```
-
-That would conflict with the Sandstorm grain model.
-
-## 10. Porter-defined Atom contract
-
-The porter defines the Atom boundary for an Element.
-
-### 10.1 Granularity metadata
-
-Phase 10 should define metadata that allows a porter to declare the user-facing noun for one Atom.
-
-Examples:
-
-```text
-Notepad     → document
-Wekan       → board
-Git         → repository
-Notebook    → notebook
-ImageEditor → image
-```
-
-Sandstorm packaging similarly lets an app package customize the noun shown when creating a new grain.
-
-Plasmon should use porter metadata for UI such as:
-
-```text
-New document
-New board
-New repository
-```
-
-rather than hardcoding per-application behavior into the shell.
-
-### 10.2 Atom identity
-
-An Atom needs a stable identity distinct from:
-
-- Tile ID;
-- physical `app_instance_id` unless the mapping is explicitly 1:1;
-- Element `app_id`;
-- Isotope/version identity.
-
-Closing a Tile must not delete the Atom. Reloading must not change its identity.
-
-### 10.3 Atom lifecycle
-
-The initial product lifecycle should support at least:
-
-```text
-create
-list/discover
-open
-rename/title
-delete/trash/retire
-```
-
-Future hooks may include:
-
-```text
-share
-clone
-import
-export
-migrate
-change Isotope
-```
-
-without requiring all of those in Phase 10.
-
-## 11. Phase 10 Notepad acceptance model
-
-Phase 10 is the first phase that introduces real Atom semantics.
-
-The acceptance Element is **Notepad**.
-
-Porter declaration:
-
-```text
-Element: Notepad
-Atom noun: document
-```
-
-Expected behavior:
-
-```text
-Tenant gets access to Notepad once
-
-Create "Shopping list"
-→ Atom A
-
-Create "Project notes"
-→ Atom B
-
-Create "Meeting notes"
-→ Atom C
-```
-
-Required invariants:
-
-1. A, B, and C have distinct Atom identities.
-2. Text stored in A does not appear in B or C.
-3. Reload preserves all three Atom identities and contents.
-4. Opening Atom A twice may create two Tiles pointing to Atom A.
-5. Opening Atom B opens B, not another view of A.
-6. Closing a Tile does not delete its Atom.
-7. Another tenant cannot access A without an explicit future sharing grant.
-8. The shell gets the noun `document` from porter metadata rather than hardcoding Notepad semantics.
-
-Phase 10 must also settle how these document Atoms map onto Neutron AppScopes.
-
-## 12. Physical retirement versus Atom lifecycle
-
-Phase 9 currently supports retirement of physical app instances.
-
-A retired physical app instance is permanently excluded from future physical allocation because it may contain tenant-specific stable state.
-
-Safe substrate default:
-
-```text
-physical app_instance retired
-→ revoke physical grant
-→ mark physical slot retired
-→ never assign that physical state to another tenant
-```
-
-This is not automatically the same thing as deleting an Atom.
-
-Once the Atom layer exists, Plasmon must separately define:
-
-- what deleting/trashing an Atom means;
-- whether its physical execution scope can ever be securely reclaimed;
-- retention/recovery semantics;
-- whether a future reset/migration can prove safe physical reuse.
-
-Implicit reuse of tenant data is prohibited.
-
-## 13. Runtime Publish Element
-
-### 13.1 Goal
-
-Production publishing should happen from Plasmon itself rather than by editing a host-side JSON file and reinstalling the deployment.
-
-Current owner flow:
-
-```text
-Plasmon Admin
-└── Publish Element
-    ↓
-upload .neutron
-    ↓
-metadata + initial physical execution capacity
-    ↓
-one owner approval
-    ↓
-one Neutron self-upgrade
-    ↓
-logical app + physical pool registration
-    ↓
-available to tenants
-```
-
-The current UI/code may still contain legacy wording such as "Atom capacity". Until Phase 10 settles Atom-to-AppScope mapping, the architectural term is **physical execution capacity** or **app-instance capacity**.
-
-### 13.2 Package fan-out
-
-The uploaded `.neutron` package is decoded once.
-
-The browser creates physical variants in memory by rewriting package identity metadata while sharing immutable module/web byte arrays.
-
-For a logical package:
-
-```text
-id: notepad
-```
-
-with physical capacity `4`:
-
-```text
-notepad_001
-notepad_002
-notepad_003
-notepad_004
-```
-
-These are physical app identities, not Atom IDs.
-
-Identity-bearing package metadata rewritten for each physical variant includes:
-
-- `neutron.json`;
-- `schema.json` app identity metadata;
-- `neutron.lock.json` app identity.
-
-Large module and web payloads do not need to be copied byte-for-byte for each in-memory clone.
-
-### 13.3 Approval and compilation ordering
-
-Neutron's approval UI requires compilation metadata before approval can complete.
-
-Therefore runtime publishing starts:
-
-- batch compilation; and
-- the owner approval request
-
-concurrently.
-
-After both complete successfully, the prepared package batch is deployed.
-
-Sequentially waiting for approval before starting compilation creates a deadlock where the UI remains on `Compiling...`.
-
-### 13.4 One deployment
-
-All requested physical app instances are compiled as one prepared package batch and installed through one Neutron self-upgrade.
-
-The intended cost model is:
-
-```text
-N new physical app instances
-!= N canister upgrades
-
-N physical instances
-→ 1 combined actor compile
-→ 1 self-upgrade
-```
-
-### 13.5 Dependency restriction
-
-Initial runtime publishing rejects package dependencies.
-
-Reason: logical package dependencies do not yet define physical tenant-aware dependency routing.
-
-This must be designed before dependencies are allowed.
-
-## 14. Physical capacity strategy
-
-Physical execution capacity should be demand-driven.
-
-Large speculative pools are undesirable because every installed physical AppScope contributes to the combined actor inventory and therefore affects future compile/upgrade work.
-
-Current bootstrap target:
-
-```text
-initial physical instances per logical app: 4
-```
-
-Future Add Capacity flow:
-
-```text
-logical app notepad currently:
-notepad_001 .. notepad_004
-
-owner Add Capacity +4
-        ↓
-generate:
-notepad_005 .. notepad_008
-        ↓
-batch compile
-        ↓
-one self-upgrade
-        ↓
-register only the new physical IDs
-```
-
-Automatic physical capacity expansion may later use low-water thresholds, but it should expand in batches rather than triggering a canister upgrade for every allocation.
-
-How **Atom creation** consumes this physical capacity is deliberately deferred to Phase 10's Atom-to-AppScope mapping decision.
-
-## 15. Isotopes
-
-Isotope represents a version/build/runtime profile of an Element.
-
-It is intentionally separate from Atom:
-
-```text
-Element = what application is this?
-Isotope = which version/variant executes it?
-Atom = which porter-defined user object/grain is this?
-```
-
-A future registry may model:
-
-```text
-Notepad
-├── stable / version 1.4
-└── beta / version 2.0-beta
-```
-
-Questions still to resolve:
-
-- whether an Atom is pinned to one Isotope;
-- in-place Atom upgrades versus migration;
-- rollout channels;
-- rollback;
-- stable-memory compatibility;
-- whether tenants can opt into beta Isotopes.
-
-Until then, implementation code should use normal `version`, `build`, and `package` metadata.
-
-## 16. Development bootstrap
-
-Local development currently supports declarative bootstrap pools through:
-
-```text
-plasmon-app-pools.json
-plasmon-capacity.ts
-plasmon-bootstrap.ts
-plasmon-provision.ts
-```
-
-The capacity generator materializes physical package identities and creates a generated deployment configuration.
-
-This mechanism is useful for deterministic tests and initial local setup.
-
-It is **not** the desired production publishing architecture and must not be described as pre-creating product Atoms.
-
-Production should preserve runtime-published Elements, future Atom state, and execution mappings across subsequent Neutron/Plasmon upgrades.
-
-## 17. Build and browser-compiler performance
-
-The current developer and runtime publishing paths expose two related performance issues.
-
-### 17.1 Kernel development build cost
-
-Frontend, kernel, compiler, and packaging work are currently coupled tightly enough that frontend-only edits require an expensive full package/deploy cycle.
-
-Required direction:
-
-```text
-frontend-only edit
-→ local dev server
-→ HMR/watch
-→ no canister upgrade
-```
-
-The full package/deploy path should remain the final integration test, not the CSS editing loop.
-
-### 17.2 Runtime publishing module fetches
-
-The browser compiler retrieves many existing Motoko modules using content-addressed paths such as:
-
-```text
-/mo/<content-hash>.mo
-```
-
-These modules are natural immutable-cache candidates.
-
-Future publishing should reuse modules already cached by hash instead of redownloading unchanged content for every Element or physical-capacity operation.
-
-### 17.3 Build cache
-
-The kernel build/package pipeline should gain explicit incremental cache boundaries.
-
-Potential cache units include:
-
-- frontend bundle;
-- individual Motoko source/module inputs;
-- generated assembly inputs;
-- compiler output where all relevant inputs are unchanged;
-- packaged static assets.
-
-Cache correctness and invalidation must be documented and tested.
-
-## 18. Sharding
-
-A single shared canister remains the default.
-
-Sharding becomes necessary only when practical constraints justify it, including:
-
-- installed physical app count;
-- compile time;
-- Wasm size;
-- canister memory;
-- cycles;
-- deployment latency;
-- workload isolation.
-
-Future Plasmon routing should map Element and Atom operations to the correct shard without exposing that complexity in normal UX.
-
-Atom identity should therefore not depend on a user-visible shard name.
-
-## 19. Production ownership
-
-Local development currently uses deterministic test identities.
-
-That mechanism is only for PocketIC/E2E work.
-
-Production requires:
-
-- explicit first-owner bootstrap;
-- safe owner recovery;
-- add/revoke owner administration;
-- separation between normal Plasmon administration and low-level Neutron administration.
-
-## 20. Security invariants
-
-The following invariants are architectural requirements:
-
-1. Kernel owner authority cannot be acquired merely by becoming a tenant.
-2. Tenant membership does not imply access to every installed app.
-3. Phase 9 physical app calls require the exact granted AppScope.
-4. One allocated physical app instance may belong to at most one tenant under the Phase 9 substrate model.
-5. Retired physical app instances are not implicitly reassigned.
-6. Tenant A cannot invoke Tenant B's granted physical AppScope.
-7. Logical Element metadata never substitutes for physical AppScope authorization.
-8. Publishing and physical-capacity operations remain owner-only.
-9. Registry state must not claim a physical app instance exists unless its Neutron scope is committed.
-10. Frontend filtering must never be relied on as the authorization boundary.
-11. Atom identity is distinct from Tile identity.
-12. Atom identity is distinct from physical `app_instance_id` unless an explicit mapping rule defines them as 1:1.
-13. Access to one Atom must not imply access to unrelated Atoms of the same Element.
-14. Porter-defined Atom granularity must be explicit and stable enough for ownership/sharing semantics.
-
-## 21. Architectural direction
-
-The intended long-term model is:
-
-```text
-Plasmon owner publishes an Element
-        ↓
-Neutron provides physical execution capacity
-        ↓
-tenant installs/gets access to the Element
-        ↓
-porter-defined Create action creates Atoms
-        ↓
-Atoms are independently owned/opened/shared
-        ↓
-physical execution capacity expands as required
-        ↓
-Element upgrades become Isotopes
-        ↓
-shared shards scale horizontally when necessary
-```
-
-Phase sequence:
-
-```text
-Phase 9
-physical tenant allocation + AppScope authorization substrate
-        ↓
-Phase 10
-porter-defined Atom contract + Notepad proof
-(document = Atom)
-        ↓
-later phases
-sharing, cloning/import/export, Isotope migration, cross-shard placement
-```
-
-Neutron remains the runtime substrate. Plasmon adds logical application identity, porter-defined object/grain identity, ownership, sharing, workspace semantics, capacity management, and product UX above it.
+This separation is the main architectural objective before `version-0.0.1` is merged into `dev`.
