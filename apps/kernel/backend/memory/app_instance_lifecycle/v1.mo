@@ -1,7 +1,8 @@
 import Map "mo:core/Map";
 
 module {
-    // Stable MTN lifecycle state: physical app instance id -> retired flag.
+    // Stable multitenancy-neutron lifecycle state: physical app instance id ->
+    // retired flag.
     //
     // Retirement is permanent non-reuse state, not a temporary capacity or
     // health signal. Allocation must never return a retired physical id.
