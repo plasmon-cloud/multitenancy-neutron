@@ -102,7 +102,7 @@ export function Launcher(props: LauncherProps) {
   const appMutationBlocked = operationBusy || authorityPending;
 
   // Raw Neutron File/URL installation remains available internally but is
-  // hidden from the normal Plasmon owner workflow.
+  // hidden from the normal multitenancy-neutron app-pool owner workflow.
   const showLowLevelInstallControls = false;
   const openTile = useWorkspaceStore((state) => state.openTile);
   const resetCurrentWorkspace = useWorkspaceStore(
@@ -228,7 +228,7 @@ export function Launcher(props: LauncherProps) {
           setInstallError(
             error instanceof Error
               ? error.message
-              : "Unable to load Element catalog.",
+              : "Unable to load app catalog.",
           );
         }
       });
@@ -237,14 +237,15 @@ export function Launcher(props: LauncherProps) {
       cancelled = true;
     };
   }, [open, owner, capacityOpen]);
-  // Owners continue to use Neutron's physical app/tile launcher. Tenants
-  // instead see one logical Element row, keeping workspace Tiles separate from
-  // installation/Atom allocation.
+
+  // Owners continue to use Neutron's physical app/tile launcher. Tenants see
+  // one logical app row; workspace tiles remain views over the tenant's single
+  // allocated physical app instance for that logical app.
   const entries = useMemo(
     () => (owner ? launcherEntriesFromApps(visibleApps, query) : []),
     [visibleApps, query, owner],
   );
-  const tenantElements = useMemo(() => {
+  const tenantApps = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (!normalized) return availableApps;
 
@@ -331,7 +332,7 @@ export function Launcher(props: LauncherProps) {
     return true;
   };
 
-  const activateTenantElement = async (
+  const activateTenantApp = async (
     app: (typeof availableApps)[number],
   ): Promise<void> => {
     // Open is only a workspace operation. Only Install calls the allocator, so
@@ -425,7 +426,7 @@ export function Launcher(props: LauncherProps) {
     }
   };
 
-  const publishElement = async () => {
+  const publishAppPool = async () => {
     if (!owner || !publishPackage) return;
 
     const capacity = Number(publishCapacity);
@@ -463,14 +464,15 @@ export function Launcher(props: LauncherProps) {
       if (!quietInstallCancellation(error)) {
         const message = installErrorMessage(error);
         setInstallError(message);
-        console.error(`Publish Element failed: ${message}`);
+        console.error(`Publish app pool failed: ${message}`);
       }
     } finally {
       installRunRef.current = false;
       setInstallSource(null);
     }
   };
-  const addElementCapacity = async () => {
+
+  const addAppCapacity = async () => {
     if (!owner || !capacityAppId) return;
 
     const capacity = Number(additionalCapacity);
@@ -509,13 +511,14 @@ export function Launcher(props: LauncherProps) {
       if (!quietInstallCancellation(error)) {
         const message = installErrorMessage(error);
         setInstallError(message);
-        console.error(`Add Element capacity failed: ${message}`);
+        console.error(`Add app capacity failed: ${message}`);
       }
     } finally {
       installRunRef.current = false;
       setInstallSource(null);
     }
   };
+
   const installPackageFromUrl = () => {
     const abort = new AbortController();
     urlDownloadAbortRef.current?.abort();
@@ -600,17 +603,17 @@ export function Launcher(props: LauncherProps) {
         <div className="launcher-search">
           <IoSearch aria-hidden="true" />
           <input
-            aria-label={owner ? "Search app tiles" : "Search Elements"}
+            aria-label={owner ? "Search app tiles" : "Search apps"}
             ref={inputRef}
             data-tid={testId("launcher-search")}
             value={query}
-            placeholder={owner ? "Search tiles" : "Search Elements"}
+            placeholder={owner ? "Search tiles" : "Search apps"}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== "Enter") return;
               if (owner && entries[0]) launch(entries[0]);
-              else if (!owner && tenantElements[0]) {
-                void activateTenantElement(tenantElements[0]);
+              else if (!owner && tenantApps[0]) {
+                void activateTenantApp(tenantApps[0]);
               }
             }}
           />
@@ -636,7 +639,7 @@ export function Launcher(props: LauncherProps) {
             <button
               type="button"
               className="launcher-action"
-              data-tid={testId("launcher-publish-element")}
+              data-tid={testId("launcher-publish-app")}
               disabled={installSource !== null || appMutationBlocked}
               onClick={() => {
                 setInstallError(null);
@@ -646,7 +649,7 @@ export function Launcher(props: LauncherProps) {
               }}
             >
               <IoAdd aria-hidden="true" />
-              <span>Publish Element</span>
+              <span>Publish App Pool</span>
             </button>
 
             {publishOpen ? (
@@ -656,10 +659,10 @@ export function Launcher(props: LauncherProps) {
                 noValidate
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void publishElement();
+                  void publishAppPool();
                 }}
               >
-                <label>Element package</label>
+                <label>App package</label>
 
                 <div className="btn-actions">
                   <button
@@ -688,7 +691,7 @@ export function Launcher(props: LauncherProps) {
                     }}
                   >
                     <strong>{publishPackage.fileName}</strong>
-                    <span>Element: {publishPackage.name}</span>
+                    <span>App: {publishPackage.name}</span>
                     <span>ID: {publishPackage.appId}</span>
                     <span>Version: {publishPackage.version}</span>
                   </div>
@@ -719,7 +722,7 @@ export function Launcher(props: LauncherProps) {
                 />
 
                 <label htmlFor={`${idPrefix}-publish-capacity`}>
-                  Initial Atom capacity
+                  Initial app-instance capacity
                 </label>
 
                 <div className="launcher-url-row">
@@ -768,7 +771,7 @@ export function Launcher(props: LauncherProps) {
                   >
                     {installSource === "pool"
                       ? "Publishing..."
-                      : "Publish Element"}
+                      : "Publish App Pool"}
                   </button>
 
                   <button
@@ -813,16 +816,16 @@ export function Launcher(props: LauncherProps) {
                 noValidate
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void addElementCapacity();
+                  void addAppCapacity();
                 }}
               >
-                <label htmlFor={`${idPrefix}-capacity-element`}>
-                  Element
+                <label htmlFor={`${idPrefix}-capacity-app`}>
+                  App
                 </label>
 
                 <select
-                  id={`${idPrefix}-capacity-element`}
-                  data-tid={testId("launcher-capacity-element")}
+                  id={`${idPrefix}-capacity-app`}
+                  data-tid={testId("launcher-capacity-app")}
                   disabled={
                     installSource !== null ||
                     appMutationBlocked ||
@@ -848,12 +851,12 @@ export function Launcher(props: LauncherProps) {
 
                 {selectedCapacityApp ? (
                   <div style={{ fontSize: "0.8rem" }}>
-                    Current capacity: {selectedCapacityApp.capacity} Atoms
+                    Current capacity: {selectedCapacityApp.capacity} app instances
                   </div>
                 ) : null}
 
                 <label htmlFor={`${idPrefix}-additional-capacity`}>
-                  Additional Atom capacity
+                  Additional app-instance capacity
                 </label>
 
                 <div className="launcher-url-row">
@@ -1008,61 +1011,60 @@ export function Launcher(props: LauncherProps) {
         ) : null}
         <div className="launcher-results">
           {showLowLevelInstallControls && owner ? (
-          <div className="launcher-tile-row launcher-install-entry">
-            <div className="launcher-install-tile">
-              {owner ? (
-                <span aria-hidden="true" className="launcher-install-icon">
-                  <IoAdd />
-                </span>
-              ) : null}
-              {owner ? (
-<div
-                aria-label="Install app from"
-                className="launcher-install-buttons"
-                role="group"
-              >
-                <button
-                  aria-label="Install app from File"
-                  className="launcher-install-button"
-            data-tid={testId(launcherSystemActions.installPackage)}
-                  disabled={installSource !== null || appMutationBlocked}
-                  onClick={() => {
-                    closeUrlInstall(false);
-                    void installPackage({ kind: "file" });
-                  }}
-                  type="button"
-                >
-                  <span>File</span>
-                </button>
-                <button
-                  aria-controls={`${idPrefix}-install-url-panel`}
-                  aria-expanded={urlInstallOpen}
-                  aria-label="Install app from URL"
-                  className={`launcher-install-button${urlInstallOpen ? " is-active" : ""}`}
-            data-tid={testId(launcherSystemActions.installPackageUrl)}
-                  disabled={installSource !== null || appMutationBlocked}
-                  onClick={() => {
-                    if (urlInstallOpen) closeUrlInstall(false);
-                    else {
-                      setInstallError(null);
-                      setUrlInstallOpen(true);
-                    }
-                  }}
-                  ref={installUrlButtonRef}
-                  type="button"
-                >
-                  <span>URL</span>
-                </button>
+            <div className="launcher-tile-row launcher-install-entry">
+              <div className="launcher-install-tile">
+                {owner ? (
+                  <span aria-hidden="true" className="launcher-install-icon">
+                    <IoAdd />
+                  </span>
+                ) : null}
+                {owner ? (
+                  <div
+                    aria-label="Install app from"
+                    className="launcher-install-buttons"
+                    role="group"
+                  >
+                    <button
+                      aria-label="Install app from File"
+                      className="launcher-install-button"
+                      data-tid={testId(launcherSystemActions.installPackage)}
+                      disabled={installSource !== null || appMutationBlocked}
+                      onClick={() => {
+                        closeUrlInstall(false);
+                        void installPackage({ kind: "file" });
+                      }}
+                      type="button"
+                    >
+                      <span>File</span>
+                    </button>
+                    <button
+                      aria-controls={`${idPrefix}-install-url-panel`}
+                      aria-expanded={urlInstallOpen}
+                      aria-label="Install app from URL"
+                      className={`launcher-install-button${urlInstallOpen ? " is-active" : ""}`}
+                      data-tid={testId(launcherSystemActions.installPackageUrl)}
+                      disabled={installSource !== null || appMutationBlocked}
+                      onClick={() => {
+                        if (urlInstallOpen) closeUrlInstall(false);
+                        else {
+                          setInstallError(null);
+                          setUrlInstallOpen(true);
+                        }
+                      }}
+                      ref={installUrlButtonRef}
+                      type="button"
+                    >
+                      <span>URL</span>
+                    </button>
+                  </div>
+                ) : null}
               </div>
-              ) : null}
             </div>
-          </div>
           ) : null}
-
 
           {!owner ? (
             <>
-              {tenantElements.map((app) => {
+              {tenantApps.map((app) => {
                 const installed = app.appInstanceId !== null;
                 const installedEntry = installed
                   ? appInstanceEntry(app.appInstanceId!)
@@ -1072,16 +1074,16 @@ export function Launcher(props: LauncherProps) {
                 return (
                   <div
                     className="launcher-tile-row"
-                    key={`element-${app.appId}`}
+                    key={`app-${app.appId}`}
                   >
                     <button
                       type="button"
                       className="launcher-tile"
                       aria-label={`${installed ? "Open" : "Install"} ${app.name}`}
-                      data-tid={testId(`launcher-element-${app.appId}`)}
+                      data-tid={testId(`launcher-app-${app.appId}`)}
                       data-state={installed ? "open" : "install"}
                       disabled={allocateBusyAppId !== null}
-                      onClick={() => { void activateTenantElement(app); }}
+                      onClick={() => { void activateTenantApp(app); }}
                     >
                       {installedEntry ? (
                         <img src={installedEntry.icon} alt="" />
@@ -1113,7 +1115,7 @@ export function Launcher(props: LauncherProps) {
                           }}
                         >
                           {app.description ||
-                            (installed ? "Installed" : "Install this Element")}
+                            (installed ? "Installed" : "Install this app")}
                         </span>
                         <span
                           style={{
@@ -1193,9 +1195,9 @@ export function Launcher(props: LauncherProps) {
               </div>
             );
           })}
-          {(owner ? entries.length === 0 : tenantElements.length === 0) ? (
+          {(owner ? entries.length === 0 : tenantApps.length === 0) ? (
             <div className="launcher-empty">
-              {owner ? "No matching tiles" : "No matching Elements"}
+              {owner ? "No matching tiles" : "No matching apps"}
             </div>
           ) : null}
         </div>
