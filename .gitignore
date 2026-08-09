@@ -10,6 +10,7 @@ build
 *.ndeploy.session.json.tmp-*
 *.blast
 *.tsbuildinfo
+.DS_Store
 playwright-report
 test-results
 tmp/
