@@ -4,14 +4,6 @@
 
 The repository intentionally uses Neutron terminology. Higher-level products can build their own user-facing models on top of these primitives without changing the runtime's concepts or package format.
 
-## Status
-
-`version-0.0.1` is the current version branch.
-
-- `dev` is the integration base and eventual merge target for version work in this repository.
-- Upstream Neutron `main` is a separate compatibility reference used to minimize divergence from the original project.
-- `version-0.0.1` should remain mergeable into `dev` while upstream-derived files are kept as close to current Neutron as practical.
-
 See [UPSTREAM.md](UPSTREAM.md) for the file-by-file divergence policy and [doc/architecture.md](doc/architecture.md) for the runtime model.
 
 ## Core model
@@ -47,7 +39,7 @@ The physical Neutron AppScope remains the execution security boundary.
 
 ## Persistence
 
-The current multi-tenant state adds four stable-memory roots to the kernel:
+The multi-tenant state adds four stable-memory roots to the kernel:
 
 ```text
 tenants
@@ -56,7 +48,7 @@ app_instance_lifecycle
 app_catalog
 ```
 
-Their current roles are:
+Their roles are:
 
 | Root | Mapping | Purpose |
 | --- | --- | --- |
@@ -144,8 +136,8 @@ A deployed retirement/non-reuse regression test is still required; see [TODO.md]
 ## Repository documentation
 
 - [Architecture](doc/architecture.md) — runtime, authorization, allocation, persistence, and compatibility model.
-- [TODO](TODO.md) — current cleanup and version roadmap.
-- [Upstream divergence notes](UPSTREAM.md) — why this branch differs from Neutron and how to minimize those differences.
+- [TODO](TODO.md) — current cleanup roadmap.
+- [Upstream divergence notes](UPSTREAM.md) — why this repository differs from Neutron and how to minimize those differences.
 
 ## Development rule
 
