@@ -476,6 +476,11 @@ test("keeps generic words and one reviewed Files type field out of identity chec
     "apps/kernel/src/unreviewed_type.ts",
     'type Coupled = AppDispatch["files"];',
   );
+  await writeFixtureSource(
+    workspace,
+    "support/dispenser/generic.ts",
+    "const receipt = { files_sha256: digest };",
+  );
 
   expect(await checkCoreAppAgnostic(workspace)).toEqual([
     {

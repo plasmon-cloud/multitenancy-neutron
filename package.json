@@ -10,8 +10,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test:unit",
-    "test:unit": "npm --workspace neutron-tools test && npm --workspace neutron-motoko-capabilities test && npm --workspace neutron-motoko-wasm test && npm --workspace neutron-design-system test && npm --workspace neutron-scripts test && npm --workspace neutron-security test && npm --workspace neutron-compiler test && npm --workspace neutron-cli test && npm --workspace neutron-provision test && npm --workspace neutron-kernel test && npm --workspace neutron-hello test && npm --workspace neutron-kitchensink test && npm --workspace neutron-gemma test && npm --workspace neutron-vfs test && npm --workspace neutron-wagyu test && npm --workspace neutron-spreadsheet test && npm --workspace neutron-agent test && npm --workspace neutron-chess test && npm --workspace neutron-contacts test && npm --workspace neutron-mail test && npm --workspace neutron-wallet test && npm --workspace neutron-example-repository test && npm --workspace dispenser test && npm --workspace neutron-update-source test",
+    "test": "npm run test:core",
+    "test:unit": "npm run test:core",
     "test:e2e": "playwright test",
     "test:e2e:kitchensink": "playwright test test/e2e/kitchensink-design-system.spec.ts test/e2e/kitchensink-capabilities.spec.ts",
     "test:e2e:kitchensink:fresh": "npm run local:deploy && npm run test:e2e:kitchensink",
@@ -34,7 +34,16 @@
     "multitenancy-neutron:serve": "npm run multitenancy-neutron:generate && npm run provision -- multitenancy-neutron.ndeploy.json serve",
     "multitenancy-neutron:deploy": "npm run multitenancy-neutron:generate && bun multitenancy-neutron-provision.ts multitenancy-neutron.ndeploy.json reinstall",
     "multitenancy-neutron:status": "npm run provision -- multitenancy-neutron.ndeploy.json status",
-    "multitenancy-neutron:test": "NEUTRON_NDEPLOY_CONFIG=multitenancy-neutron.ndeploy.json playwright test test/e2e/local-kernel.spec.ts --grep \"multitenancy-neutron (tenants cannot cross owner or allocation boundaries|tenant launcher installs once and reopens the same app)\""
+    "multitenancy-neutron:test": "npm run test:e2e:multitenancy",
+    "test:core": "npm --workspace neutron-cli test && npm --workspace neutron-compiler test && npm --workspace neutron-design-system test && npm --workspace neutron-motoko-capabilities test && npm --workspace neutron-motoko-wasm test && npm --workspace neutron-provision test && npm --workspace neutron-scripts test && npm --workspace neutron-security test && npm --workspace neutron-tools test && npm --workspace neutron-kernel test",
+    "test:apps": "npm --workspace neutron-agent test && npm --workspace neutron-chess test && npm --workspace neutron-contacts test && npm --workspace neutron-demo-001 test && npm --workspace neutron-demo-002 test && npm --workspace neutron-gemma test && npm --workspace neutron-hello test && npm --workspace neutron-hello-a test && npm --workspace neutron-hello-b test && npm --workspace neutron-hullshift run package && npm --workspace neutron-jetcreeper test && npm --workspace neutron-kitchensink test && npm --workspace neutron-mail test && npm --workspace neutron-mysubnet test && npm --workspace neutron-spreadsheet test && npm --workspace neutron-vetkeys-fixture test && npm --workspace neutron-vfs test && npm --workspace neutron-wagyu test && npm --workspace neutron-wallet test",
+    "test:support": "npm --workspace dispenser test && npm --workspace neutron-example-repository test && npm --workspace neutron-update-source test",
+    "test:extras": "npm --workspace neutron-chess run test:motoko && npm --workspace neutron-contacts run test:motoko && npm --workspace neutron-hullshift run brain:test && npm --workspace neutron-hullshift run brain:python:test && npm --workspace neutron-hullshift run brain:parity && npm --workspace neutron-kernel run test:package-artifacts && npm --workspace neutron-mail run test:motoko && npm --workspace neutron-mail run test:e2e:typecheck && npm --workspace neutron-mail run test:e2e:list && npm --workspace neutron-mail run test:e2e && npm --workspace neutron-mail run test:vetkeys:kat && npm --workspace neutron-spreadsheet run test:e2e:list && npm --workspace neutron-spreadsheet run test:e2e && npm --workspace neutron-spreadsheet run test:e2e:fresh && npm --workspace neutron-vetkeys-fixture run test:browser-vectors && npm --workspace neutron-vfs run test:ts && npm --workspace neutron-vfs run test:browser-release && npm --workspace neutron-vfs run test:release && npm --workspace neutron-vfs run test:motoko && npm --workspace neutron-wagyu run test:motoko && npm --workspace neutron-wallet run test:motoko",
+    "test:release": "npm run typecheck && npm run security:check && npm run validate && npm run package",
+    "test:e2e:upstream": "NEUTRON_E2E_WITH_II=1 playwright test --grep-invert \"^multitenancy-neutron \"",
+    "test:e2e:multitenancy": "NEUTRON_NDEPLOY_CONFIG=multitenancy-neutron.ndeploy.json playwright test --grep \"^multitenancy-neutron \"",
+    "test:e2e:all:fresh": "bun scripts/test-e2e-all.ts",
+    "test:all": "npm test && npm run test:apps && npm run test:release && npm run test:support && npm run test:extras && npm run test:e2e:all:fresh"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

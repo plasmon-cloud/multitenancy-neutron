@@ -29,11 +29,13 @@ The current implementation already demonstrates the essential multi-tenant behav
 
 Before deeper architectural cleanup, preserve and validate the existing behavior baseline.
 
-- [ ] `npm --workspace neutron-kernel run package`
-- [ ] `npm --workspace neutron-kernel test`
-- [ ] `npm run multitenancy-neutron:deploy`
-- [ ] `npm run multitenancy-neutron:test`
-- [ ] Run ordinary upstream Neutron E2E coverage required by the modified upstream-derived files.
+- [x] Fast core gate passes with `npm test`.
+- [x] Focused deployed multi-tenant allocation/isolation E2E coverage passes.
+- [x] Focused tenant launcher `Install -> Open -> reload` E2E coverage passes.
+- [x] Root testing is divided into documented core, app, support, specialized, release, and E2E groups.
+- [ ] Run `npm run test:all` in a complete development environment, including application-specific toolchains.
+- [ ] Make GitHub Actions enforce the appropriate complete test groups.
+- [ ] Add the deployed retirement/non-reuse regression.
 - [ ] Confirm no stale higher-level product terminology remains in runtime code, tests, scripts, filenames, or repository documentation.
 
 ## P1 — minimize upstream frontend conflicts

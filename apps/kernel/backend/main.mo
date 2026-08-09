@@ -2363,18 +2363,18 @@ module {
         public func /*query*/kernel_app_instances_for_app(
             input : { app_id : Text },
         ) : [Text] {
-            var result : [Text] = [];
+            let result = List.empty<Text>();
 
             for (
                 (appInstanceId, registeredAppId)
                 in Map.entries(appInstancesMem.instances)
             ) {
                 if (registeredAppId == input.app_id) {
-                    result := Array.concat(result, [appInstanceId]);
+                    List.add(result, appInstanceId);
                 };
             };
 
-            Array.sort(result, Text.compare);
+            List.toArray(List.sort(result, Text.compare));
         };
 
         // Self-scoped tenant installation lookup.
@@ -2395,13 +2395,13 @@ module {
         // Unlike kernel_available_apps this includes exhausted apps so
         // administration can add capacity to them.
         public func /*query*/kernel_app_catalog_list(()) : [Text] {
-            var result : [Text] = [];
+            let result = List.empty<Text>();
 
             for ((appId, _) in Map.entries(appCatalogMem.apps)) {
-                result := Array.concat(result, [appId]);
+                List.add(result, appId);
             };
 
-            Array.sort(result, Text.compare);
+            List.toArray(List.sort(result, Text.compare));
         };
 
         func app_catalog_has(appId : Text) : Bool {
@@ -2478,7 +2478,7 @@ module {
         ) : [Text] {
             assert(is_session_authorized(caller));
 
-            var result : [Text] = [];
+            let result = List.empty<Text>();
 
             for ((appId, _) in Map.entries(appCatalogMem.apps)) {
                 var visible = tenant_app_instance_for_app(caller, appId) != null;
@@ -2504,11 +2504,11 @@ module {
                 };
 
                 if (visible) {
-                    result := Array.concat(result, [appId]);
+                    List.add(result, appId);
                 };
             };
 
-            Array.sort(result, Text.compare);
+            List.toArray(List.sort(result, Text.compare));
         };
 
         // Tenant-facing allocator.

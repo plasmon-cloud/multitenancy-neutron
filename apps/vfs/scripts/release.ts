@@ -46,7 +46,6 @@ const FILES_SOURCE_ROOT_FILES = [
   "neutron.json",
   "neutron.lock.json",
   "package.json",
-  "todo.files.2.md",
   "tsconfig.app.json",
   "tsconfig.json",
   "tsconfig.scripts.json",

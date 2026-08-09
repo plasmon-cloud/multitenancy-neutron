@@ -211,6 +211,12 @@ Generic test-harness cleanup: assemble the actual kernel wrapper through the sha
 
 The remaining repository delta is small and must be audited line-by-line against current upstream. Current upstream already contains active app-instance inventory/AppScope assembler infrastructure; do not assume every remaining line is required here.
 
+### `apps/vfs/scripts/release.ts`
+
+**Category:** generic upstream release-script fix discovered during test stabilization.
+
+The VFS release evidence source list referenced `todo.files.2.md`, but that file is not present in the repository. The stale entry caused release-evidence generation to fail before VFS testing could begin. The source-list entry is removed; this is unrelated to multi-tenancy and is being tracked separately upstream.
+
 ## Other test/build deltas to audit
 
 These changed during proof-of-concept development but are not, by themselves, permanent multi-tenant architecture:
@@ -312,14 +318,25 @@ Generated/untracked output such as `dist/`, `*.neutron`, `.mops/`, `.multitenanc
 
 ## Validation baseline
 
-The core validation commands are:
+The fork intentionally separates its fast development gate from exhaustive repository verification.
 
 ```text
-npm --workspace neutron-kernel run package
-npm --workspace neutron-kernel test
-npm run multitenancy-neutron:deploy
-npm run multitenancy-neutron:test
+npm test
+npm run test:apps
+npm run test:support
+npm run test:extras
+npm run test:release
+npm run test:e2e:all:fresh
+npm run test:all
 ```
+
+`npm test` is deliberately limited to test-bearing `packages/*` workspaces plus `neutron-kernel`. It must remain fast enough to serve as the normal development regression gate and must not implicitly package/test every bundled application.
+
+`npm run test:all` is the exhaustive automated gate. It includes application and support suites, specialized workspace test entrypoints, type/security/validation/package checks, ordinary Neutron E2E behavior, and the repository-specific multi-tenant E2E behavior.
+
+The E2E wrapper owns the PocketIC processes it starts and uses the provisioner's readiness and shutdown contracts instead of arbitrary sleeps or polling.
+
+Production qualification evidence remains separate from this automated test grouping.
 
 Treat the implementation as a behavior baseline, not yet as the final low-conflict architecture. Ordinary upstream Neutron owner/package/runtime behavior remains a hard compatibility requirement; multi-tenant tests supplement those gates rather than replacing them.
 

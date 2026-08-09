@@ -2117,6 +2117,15 @@ test("multitenancy-neutron tenant launcher installs once and reopens the same ap
     const reloadedHello = await revealTenantHelloAction("Open Hello");
     await reloadedHello.click();
 
+    // Opening after a reload may require the launcher's one authoritative
+    // physical-app registry refresh. Playwright's click waits for the browser
+    // event, not for the async React handler to finish, so wait for the
+    // expected physical app frame before inspecting the workspace.
+    const reloadedFrame = page.locator(
+      `iframe.tile-iframe[data-app-id="${physicalAppId}"]`,
+    ).first();
+    await expect(reloadedFrame).toBeVisible({ timeout: 20_000 });
+
     const afterReloadIds = await page
       .locator('iframe.tile-iframe[data-app-id^="hello_"]')
       .evaluateAll((frames) =>

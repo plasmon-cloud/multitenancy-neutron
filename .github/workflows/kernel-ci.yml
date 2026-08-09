@@ -6,6 +6,7 @@ on:
       - main
       # `dev` is the integration base for multitenancy-neutron release branches.
       - dev
+      - version-0.1.0
   pull_request:
   workflow_dispatch:
 
@@ -50,9 +51,12 @@ jobs:
             npm --workspace neutron-kernel run package
           '
 
-      - name: Kernel tests
+      # npm test is the documented fast core gate. It runs every
+      # test-bearing package workspace plus the Kernel Bun and Motoko suites.
+      # Application, support, release, and E2E suites remain separate groups.
+      - name: Core tests
         run: |
           nix develop --command bash -lc '
             set -euxo pipefail
-            npm --workspace neutron-kernel test
+            npm test
           '

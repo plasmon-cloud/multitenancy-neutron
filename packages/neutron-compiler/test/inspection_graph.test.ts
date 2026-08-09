@@ -127,6 +127,10 @@ const compilableKernel = `
       ) {};
       public func kernel_authorized_add(_caller : Principal) {};
       public func is_authorized(_caller : Principal) : Bool { true };
+            public func is_session_authorized(_caller : Principal) : Bool { true };
+            public func is_app_authorized(
+              _input : { caller : Principal; scope : AppScope },
+            ) : Bool { true };
     };
   }
 `;

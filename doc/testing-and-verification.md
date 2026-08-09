@@ -7,49 +7,53 @@ tests, and production qualification evidence. A passing unit test proves the
 tested contract; it does not turn an unmeasured production boundary into a
 release claim.
 
-## Fast Checks
+## Test Groups
 
-Run the repository baseline from the root:
+For normal development, run:
 
 ```sh
 npm test
-npm run typecheck
-npm run security:check
 ```
 
-`npm test` runs the workspace unit suites. The main layers are:
+`npm test` is the fast core gate for this repository. It runs every test-bearing workspace under `packages/*` plus the Kernel test suite. The Kernel command itself runs both Bun tests and its Motoko test runner.
 
-| Layer | What it checks |
+It intentionally excludes ordinary application and support workspaces. Several application tests perform packaging, release verification, browser compilation, ABI checks, or depend on prebuilt application archives, so treating all of them as a daily "unit" suite made the root command slow and misleading.
+
+The supported groups are:
+
+| Command | Contract |
 | --- | --- |
-| `packages/neutron-tools` | Format-3 manifest validation, package decoding, capability normalization and fingerprints, API-1 private-port self calls, generic tool attachments, repository records, runtime configuration, and helper APIs |
-| `packages/neutron-motoko-capabilities` | The Motoko capability types and their bounded public surface |
-| `packages/neutron-motoko-wasm` | Browser compiler initialization and compiler-package behavior |
-| `packages/neutron-security` | Motoko source-policy fixtures |
-| `packages/neutron-compiler` | Package preparation, `neutron_actor_v25` assembly, memory planning, capability projection, fresh compiler isolation, install journals, chunked Wasm installation, and atomic commit behavior |
-| `packages/neutron-provision` | Format-3 deployment configs, schema-3 private sessions, PocketIC supervision, IC create/adopt/reinstall flows, exact production artifact pins, local path-only archives, fleet deployment, and recovery |
-| `apps/kernel` | Authorization, consent, MessagePort routing, self-call binary binding, capability services, install state, certified HTTP, Settings, workspaces, trays, connections, browser wallets, Agent Mode, and runtime invalidation |
-| App workspaces | Each app's manifest, backend, frontend, exposed tools, package shape, and app-specific protocol behavior |
-| Support workspaces | Dispenser, update-source, and repository generation/publication contracts |
+| `npm test` / `npm run test:core` | Fast package/tooling and Kernel regression gate |
+| `npm run test:apps` | All application workspace default tests, with packaging fallback for apps without a default test |
+| `npm run test:support` | Support/distribution/repository tests |
+| `npm run test:extras` | Specialized workspace test entrypoints such as secondary browser, ABI, Python, parity, or package-artifact suites |
+| `npm run test:release` | Root typecheck, security scan, validation, and package verification |
+| `npm run test:e2e:upstream` | Ordinary Neutron Playwright tests |
+| `npm run test:e2e:multitenancy` | Multi-tenant deployment-specific Playwright tests |
+| `npm run test:e2e:all:fresh` | Both E2E environments with owned PocketIC lifecycle |
+| `npm run test:all` | Complete automated repository test gate |
 
-Run a focused suite while developing:
-
-```sh
-npm --workspace neutron-tools test
-npm --workspace neutron-compiler test
-npm --workspace neutron-provision test
-npm --workspace neutron-kernel test
-npm --workspace neutron-wagyu test
-```
-
-Package an app before testing its install path:
+The complete gate is therefore:
 
 ```sh
-npm --workspace neutron-wagyu run package
+npm run test:all
 ```
 
-The root `validate` and `package` scripts cover the checked-in app set. Tests
-should not depend on generated archives being present unless the test creates
-them or its command explicitly runs packaging first.
+The root Playwright configuration discovers tests from `test/e2e/`. The full E2E runner separates ordinary Neutron cases from tests whose names begin with `multitenancy-neutron` because those groups require different deployment configurations.
+
+Workspace test coverage can be audited directly from the manifests with:
+
+```sh
+npm pkg get scripts --workspaces
+```
+
+A workspace's default `test` command is run by its primary group. Secondary test entrypoints are also collected under `test:extras` so a named test suite is not lost merely because it is not part of the old root test chain.
+
+Some negative security/package tests intentionally emit rejection diagnostics while proving dangerous source is refused. Judge the enclosing test result rather than the diagnostic color.
+
+The full application gate can require application-specific toolchains that are intentionally unnecessary for `npm test`. VFS ABI tests, for example, require the external Candid/Motoko CLI tools used by that application.
+
+Production qualification evidence is deliberately separate. `npm run test:all` covers automated repository tests, validations, packaging, and E2E behavior; commands that generate release qualification evidence or exercise live production networks retain their own explicit procedures.
 
 ## Contract Assertions
 

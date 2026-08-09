@@ -108,30 +108,32 @@ multitenancy-neutron-provision.ts
 
 These are development/control-plane helpers around the generic kernel APIs. They are not part of the tenant execution model.
 
-## Validation
+## Testing
 
-The important behavioral gates are:
+The repository has separate test scopes so normal development does not require compiling and testing every bundled application.
 
-```bash
-npm --workspace neutron-kernel run package
-npm --workspace neutron-kernel test
-npm run multitenancy-neutron:deploy
-npm run multitenancy-neutron:test
-```
+| Command | Scope |
+| --- | --- |
+| `npm test` | Fast core gate. Runs the test suites for `packages/*` plus `neutron-kernel`. |
+| `npm run test:core` | Explicit name for the same fast core gate. |
+| `npm run test:apps` | Runs every app workspace's default test. Apps without a default test are packaged so their validation/build path is still exercised. |
+| `npm run test:support` | Runs support-workspace tests such as Dispenser, repository, and update-source. |
+| `npm run test:extras` | Runs specialized named test suites not represented solely by a workspace's default `test` command. |
+| `npm run test:release` | Runs root typechecking, security validation, manifest validation, and packaging. |
+| `npm run test:e2e:upstream` | Runs ordinary Neutron Playwright coverage, excluding the multi-tenant deployment-specific cases. |
+| `npm run test:e2e:multitenancy` | Runs all Playwright tests whose names begin with `multitenancy-neutron`. |
+| `npm run test:e2e:all:fresh` | Starts and owns the required PocketIC environments, runs both E2E groups, and shuts down the processes it started. |
+| `npm run test:all` | Full repository gate: core, apps, release checks, support, specialized tests, and all E2E coverage. |
 
-The multi-tenant E2E coverage protects, among other things:
+`npm test` intentionally does **not** compile/package every bundled application and does not run Playwright. It does include `npm --workspace neutron-kernel test`, which runs the Kernel's normal Bun tests and Motoko test runner.
 
-- tenant self-enrollment without owner privilege;
-- owner-only physical deployment authority;
-- idempotent allocation;
-- independent allocation of different logical apps;
-- distinct physical allocations for different tenants;
-- persistence across actor/client recreation;
-- direct access to the owning physical AppScope;
-- rejection of cross-tenant physical AppScope access;
-- launcher `Install -> Open` behavior using the same physical app instance after reopen/reload.
+The full application suite may require application-specific development tools that are not needed by the fast core gate. For example, the VFS ABI suite requires the external Motoko/Candid command-line tools used by that application.
 
-A deployed retirement/non-reuse regression test is still required; see [TODO.md](TODO.md).
+Some security and packaging tests intentionally print red rejection diagnostics while testing unsafe input. A red diagnostic is not a failure when the enclosing test reports success.
+
+The important multi-tenant behavioral coverage remains part of the E2E group and protects tenant isolation, owner separation, idempotent allocation, persistence, physical AppScope authorization, and launcher `Install -> Open` behavior.
+
+Production qualification evidence such as `neutron-kernel certified-assets:qualify` remains a separate release-evidence activity. It is not silently treated as an ordinary test by `test:all`.
 
 ## Repository documentation
 

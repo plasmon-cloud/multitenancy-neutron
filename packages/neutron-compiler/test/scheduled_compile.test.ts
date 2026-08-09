@@ -229,6 +229,10 @@ module {
     public func app_usage_instruction_finish(_measurement : Nat64) {};
     public func kernel_authorized_add(_caller : Principal) {};
     public func is_authorized(_caller : Principal) : Bool { true };
+    public func is_session_authorized(_caller : Principal) : Bool { true };
+    public func is_app_authorized(
+      _input : { caller : Principal; scope : AppScope },
+    ) : Bool { true };
   };
   func capability(self : actor {}) : BackendCallsCapability {
     {

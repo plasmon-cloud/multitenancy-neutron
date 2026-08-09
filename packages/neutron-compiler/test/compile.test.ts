@@ -419,6 +419,14 @@ const kernelCapabilityConfigurationMethod = `
   };
   public func runtime_app_instances(_deploymentId : Text) : [AppInstance] { [] };
   public func scope_active(_scope : AppScope) : Bool { true };
+
+  // Compiler fixtures model the Kernel's authorization interface. These are
+  // deliberately permissive because compile tests exercise assembly/type
+  // correctness, not the Kernel's authorization implementation.
+  public func is_session_authorized(_caller : Principal) : Bool { true };
+  public func is_app_authorized(
+    _input : { caller : Principal; scope : AppScope },
+  ) : Bool { true };
   public type PublicIngressCyclesCapability = {
     available : () -> Nat;
     request : Nat -> ();

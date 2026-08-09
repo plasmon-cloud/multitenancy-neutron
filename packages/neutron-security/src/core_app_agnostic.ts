@@ -30,6 +30,14 @@ const IGNORED_FILES = new Set([
   "moc.wasm.js",
 ]);
 const REMOVED_CORE_PREFIXES = ["files_", "public_candid_", "wagyu_"] as const;
+
+// Exact generic identifiers that happen to overlap a removed app-shaped
+// prefix. Keep this list deliberately narrow: arbitrary files_* vocabulary
+// remains prohibited.
+const GENERIC_REMOVED_VOCABULARY_EXCEPTIONS = new Set([
+  "files_sha256",
+]);
+
 const REMOVED_CORE_VOCABULARY = [
   "FilesObject",
   "FilesPresentation",
@@ -270,13 +278,16 @@ function collectPolicyMatches(
     policy.bareMethodPattern,
   );
   for (const match of source.matchAll(policy.removedPattern)) {
+    const value = match[1]!;
+    if (GENERIC_REMOVED_VOCABULARY_EXCEPTIONS.has(value)) continue;
+
     pushMatch(
       issues,
       file,
       source,
       match.index ?? 0,
       "removed_vocabulary",
-      match[1]!,
+      value,
     );
   }
 }
