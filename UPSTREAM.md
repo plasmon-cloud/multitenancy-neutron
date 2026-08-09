@@ -321,7 +321,7 @@ These contain historical Plasmon/Malstorm product architecture. Do not mechanica
 
 ### `.github/workflows/kernel-ci.yml`
 
-`dev` is the integration branch for `multitenancy-neutron` version work. The historical `malstorm-phase1` CI target must not return. Keep pull-request CI and normal stable-branch CI as appropriate, but version branches target `dev` for integration.
+`dev` is the integration branch for `multitenancy-neutron` version work. Keep pull-request CI and normal stable-branch CI as appropriate, but version branches target `dev` for integration.
 
 ## Validation baseline
 
