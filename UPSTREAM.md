@@ -6,7 +6,7 @@ The target relationship is:
 
 > `multitenancy-neutron` = backwards-compatible Neutron + generic multi-tenant allocation/isolation + a minimal built-in tenant control plane.
 
-`dev` is this repository's integration base. Current upstream Neutron `main` is the external compatibility reference.
+Upstream Neutron is the external compatibility reference. Repository integration and release mechanics are intentionally kept out of this document.
 
 ## Review rule
 
@@ -51,7 +51,7 @@ Never migrate the legacy unscoped `neutron-kernel-workspaces-v2` value into a pr
 
 ### Stable-memory compatibility
 
-`multitenancy-neutron` currently adds these persistent roots:
+`multitenancy-neutron` adds these persistent roots:
 
 ```text
 tenants
@@ -60,7 +60,7 @@ app_instance_lifecycle
 app_catalog
 ```
 
-Their names and `v1.mo` layouts are upgrade-sensitive once compatibility with deployed state is promised. Physical and logical ids stored inside these maps are persistent data as well; changing identifier semantics changes the meaning of grants, lifecycle records, and catalog mappings.
+Their names and persisted layouts are upgrade-sensitive once compatibility with deployed state is promised. Physical and logical ids stored inside these maps are persistent data as well; changing identifier semantics changes the meaning of grants, lifecycle records, and catalog mappings.
 
 ## Required source divergences
 
@@ -70,7 +70,7 @@ Their names and `v1.mo` layouts are upgrade-sensitive once compatibility with de
 
 Resolves a tenant's already-assigned physical instance for a logical app. Reads remain deterministic if older state contains duplicate grants, while allocation writes prevent new duplicates. Unusable or retired instances are not selected.
 
-Protected by `apps/kernel/test/motoko/app_instance_allocation_test.mo` and deployed allocation/isolation assertions in `test/e2e/local-kernel.spec.ts`.
+Protected by `apps/kernel/test/motoko/app_instance_allocation_test.mo` and deployed allocation/isolation assertions in the multi-tenant E2E coverage.
 
 ### `apps/kernel/backend/memory/tenants/v1.mo`
 
@@ -102,15 +102,15 @@ Stores logical application metadata independently of physical app instances. Cat
 
 **Category:** required seam; major upstream-conflict hotspot.
 
-Contains current actor seams for tenant membership/grants, owner-vs-tenant authorization, logical catalog, physical instance registry, lifecycle/retirement, deterministic allocation, AppScope authorization, and owner-only administration.
+Contains actor seams for tenant membership/grants, owner-vs-tenant authorization, logical catalog, physical instance registry, lifecycle/retirement, deterministic allocation, AppScope authorization, and owner-only administration.
 
 Keep ordinary Neutron owner semantics intact. The cleanup target is to move implementation into focused `multitenancy-neutron` modules so `main.mo` eventually contains mostly imports, service construction, small wrappers, and unavoidable actor/authorization seams.
 
 ### `apps/kernel/src/reducer/apps.ts`
 
-**Category:** current required seam; upstream-conflict hotspot.
+**Category:** required seam; upstream-conflict hotspot.
 
-The current branch contains app-pool publication and capacity behavior in the ordinary Neutron apps reducer.
+Contains app-pool publication and capacity behavior in the ordinary Neutron apps reducer.
 
 Compatibility invariant: `multitenancy-neutron` must not fork the `.neutron` package format. Standard packages supported by upstream Neutron must remain compatible.
 
@@ -120,7 +120,7 @@ Cleanup target: move pool-specific behavior into repository-owned modules while 
 
 ### `apps/kernel/src/reducer/auth.ts`
 
-**Category:** current required seam; upstream-conflict hotspot.
+**Category:** required seam; upstream-conflict hotspot.
 
 Adds tenant self-enrollment, owner-vs-tenant role state, tenant logical-app discovery/allocation, and activation of principal-scoped workspace persistence.
 
@@ -138,7 +138,7 @@ Cleanup target: move scope/key handling into a focused persistence helper if tha
 
 ### `apps/kernel/src/workspace/Launcher.tsx`
 
-**Category:** current required seam; major upstream-conflict hotspot.
+**Category:** required seam; major upstream-conflict hotspot.
 
 Contains the tenant logical-app launcher. Required behavior is `Install` when no physical allocation exists and `Open` after allocation. Reopening and reloading must use the same physical instance.
 
@@ -148,7 +148,7 @@ Preferred cleanup shape: move tenant behavior to `TenantLauncher.tsx`, restore u
 
 ### `apps/kernel/src/workspace/KernelTrayItem.tsx`
 
-**Category:** current required seam; upstream-conflict hotspot.
+**Category:** required seam; upstream-conflict hotspot.
 
 Tenant sessions must not receive owner Settings/system-administration behavior.
 
@@ -164,9 +164,9 @@ Protects deterministic same-logical-app resolution, deterministic duplicate hand
 
 Protects tenant self-enrollment followed by an authorization recheck while preserving ordinary owner authentication behavior.
 
-### `test/e2e/local-kernel.spec.ts`
+### Multi-tenant E2E coverage
 
-The multi-tenant regression block protects:
+The regression coverage protects:
 
 - two tenants can join;
 - tenant sessions are authorized but are not owners;
@@ -209,11 +209,11 @@ Generic test-harness cleanup: assemble the actual kernel wrapper through the sha
 ### `packages/neutron-compiler/src/assemble.ts`
 ### `packages/neutron-compiler/test/assemble.test.ts`
 
-The remaining branch delta is small and must be audited line-by-line against current upstream. Current upstream already contains active app-instance inventory/AppScope assembler infrastructure; do not assume every remaining line is required here.
+The remaining repository delta is small and must be audited line-by-line against current upstream. Current upstream already contains active app-instance inventory/AppScope assembler infrastructure; do not assume every remaining line is required here.
 
 ## Other test/build deltas to audit
 
-These changed during the proof-of-concept work but are not, by themselves, permanent multi-tenant architecture:
+These changed during proof-of-concept development but are not, by themselves, permanent multi-tenant architecture:
 
 ```text
 apps/kernel/package.json
@@ -310,15 +310,9 @@ npm-owned dependency lock. Regenerate through normal npm operations; do not hand
 
 Generated/untracked output such as `dist/`, `*.neutron`, `.mops/`, `.multitenancy-neutron-generated/`, and `multitenancy-neutron.ndeploy.json` is not source.
 
-## CI branch policy
-
-### `.github/workflows/kernel-ci.yml`
-
-`dev` is the integration branch for version work. Version branches should target `dev` for repository integration. Current upstream Neutron `main` remains the separate compatibility reference used during divergence audits.
-
 ## Validation baseline
 
-The core validation commands for this branch are:
+The core validation commands are:
 
 ```text
 npm --workspace neutron-kernel run package
@@ -327,13 +321,8 @@ npm run multitenancy-neutron:deploy
 npm run multitenancy-neutron:test
 ```
 
-Treat the current branch as a behavior baseline, not yet as the final low-conflict architecture. Ordinary upstream Neutron owner/package/runtime behavior remains a hard compatibility requirement; multi-tenant tests supplement those gates rather than replacing them.
+Treat the implementation as a behavior baseline, not yet as the final low-conflict architecture. Ordinary upstream Neutron owner/package/runtime behavior remains a hard compatibility requirement; multi-tenant tests supplement those gates rather than replacing them.
 
-## Before merging `version-0.0.1` into `dev`
+## Integration review
 
-Compare the version branch against both `dev` and current upstream Neutron `main`:
-
-- `dev` is the repository integration base and merge target;
-- upstream Neutron `main` is the compatibility/conflict-minimization reference.
-
-For each modified upstream-derived file, first try to restore it exactly to current upstream Neutron. If that is impossible, move as much implementation as practical into `multitenancy-neutron`-owned files and leave one small, explicit, documented seam.
+Compare modified upstream-derived files against current upstream Neutron. For each file, first try to restore it exactly. If that is impossible, move as much implementation as practical into `multitenancy-neutron`-owned files and leave one small, explicit, documented seam.
