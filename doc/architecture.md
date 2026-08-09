@@ -16,23 +16,7 @@ The repository does not define higher-level product objects. External systems ma
 
 For the file-level divergence policy, see [UPSTREAM.md](../UPSTREAM.md).
 
-## 2. Branch and compatibility model
-
-`dev` is the integration base for version work in this repository. `version-0.0.1` is developed against `dev` and is intended to merge back into it.
-
-Current upstream Neutron `main` is a separate reference. It is used to answer a different question: how much of each upstream-derived file can remain identical to Neutron?
-
-Those two comparisons should not be confused:
-
-```text
-version branch -> dev
-    repository integration relationship
-
-version branch -> upstream Neutron main
-    compatibility and conflict-minimization relationship
-```
-
-## 3. Terminology
+## 2. Terminology
 
 ### Tenant
 
@@ -46,7 +30,7 @@ The tenant-facing application identity stored in the app catalog, for example:
 hello
 ```
 
-A logical app describes what application a tenant can install/open. It is not itself an execution scope.
+A logical app describes what application a tenant can install or open. It is not itself an execution scope.
 
 ### Physical app instance
 
@@ -58,8 +42,6 @@ hello_002
 ```
 
 Each physical app instance has its own ordinary Neutron AppScope and therefore its own physical runtime identity.
-
-For the current proof of concept, the physical app id and the allocated instance id are the same identifier.
 
 ### App pool
 
@@ -81,9 +63,9 @@ Permanent exclusion of a physical app instance from future allocation.
 
 Frontend views. Opening, closing, moving, or duplicating tiles does not allocate additional physical app instances.
 
-## 4. Execution model
+## 3. Execution model
 
-Neutron already compiles installed applications into one combined Internet Computer actor. `multitenancy-neutron` keeps that architecture.
+Neutron compiles installed applications into one combined Internet Computer actor. `multitenancy-neutron` keeps that architecture.
 
 A physical app instance is therefore not a container or a second canister. It is an ordinary Neutron application identity inside the kernel actor with its own AppScope.
 
@@ -101,11 +83,11 @@ kernel canister
 
 A tenant receives a grant to exactly one of those physical identities. Existing Neutron capability and physical-name machinery then provides the execution boundary.
 
-This is intentionally different from introducing a second logical authorization layer around application methods. Logical app ids are for catalog/allocation decisions. Physical AppScopes remain authoritative for execution.
+Logical app ids are for catalog and allocation decisions. Physical AppScopes remain authoritative for execution.
 
-## 5. Data model
+## 4. Data model
 
-The current implementation adds four kernel stable-memory roots.
+The implementation adds four kernel stable-memory roots.
 
 ### `tenants`
 
@@ -157,7 +139,7 @@ Responsibilities:
 - preserve catalog metadata independently of physical capacity;
 - allow owner administration to inspect logical apps even when their pools are exhausted.
 
-## 6. Allocation invariant
+## 5. Allocation invariant
 
 The central invariant is:
 
@@ -194,7 +176,7 @@ The allocator contains no `await` between candidate selection and grant mutation
 
 Repeating the same allocation returns the existing physical id rather than consuming a new pool slot.
 
-## 7. Authorization model
+## 6. Authorization model
 
 There are two distinct authorization concepts.
 
@@ -232,7 +214,7 @@ tenant:
 
 Knowledge of a physical app-instance id is never sufficient authority.
 
-## 8. Catalog visibility
+## 7. Catalog visibility
 
 The tenant-facing logical app catalog has two visibility cases.
 
@@ -245,7 +227,7 @@ The first rule ensures an installed logical app remains visible as `Open` even w
 
 An unallocated tenant should not be offered an app whose pool has no available capacity.
 
-## 9. Launcher behavior
+## 8. Launcher behavior
 
 The tenant launcher presents logical apps rather than the raw physical registry.
 
@@ -273,11 +255,11 @@ The launcher therefore:
 
 Do not replace this with sleeps, polling loops, or arbitrary retries.
 
-## 10. App pools and publication
+## 9. App pools and publication
 
-The current owner workflow can take an ordinary `.neutron` package and derive multiple physical package identities in memory.
+The owner workflow can take an ordinary `.neutron` package and derive multiple physical package identities in memory.
 
-For a logical app `hello`, capacity 4 currently produces identities such as:
+For a logical app `hello`, capacity 4 can produce identities such as:
 
 ```text
 hello_001
@@ -286,13 +268,11 @@ hello_003
 hello_004
 ```
 
-The process rewrites only identity-bearing package metadata for each physical clone, then compiles/deploys the resulting package batch through Neutron's normal compiler/deployment path.
+The process rewrites only identity-bearing package metadata for each physical clone, then compiles and deploys the resulting package batch through Neutron's normal compiler/deployment path.
 
-After the deployment is committed, the logical catalog entry and physical-instance mappings are registered with the kernel.
+After deployment is committed, the logical catalog entry and physical-instance mappings are registered with the kernel.
 
-A retained copy of the original logical package is stored at a repository-specific kernel asset path so additional capacity can later be derived from the same package.
-
-Current path:
+A retained copy of the original logical package is stored at a repository-specific kernel asset path so additional capacity can later be derived from the same package:
 
 ```text
 /multitenancy-neutron/templates/<logical-app-id>.neutron
@@ -300,9 +280,9 @@ Current path:
 
 ### Current limitation
 
-The proof-of-concept app-pool publication path rejects application packages with dependencies. This is not a package-format restriction. Standard `.neutron` compatibility remains a requirement; the pool compiler path needs to be extended to reproduce dependency graphs safely for multiple physical identities.
+The proof-of-concept app-pool publication path rejects application packages with dependencies. This is not a package-format restriction. Standard `.neutron` compatibility remains a requirement; the pool compiler path needs to reproduce dependency graphs safely for multiple physical identities.
 
-## 11. Retirement lifecycle
+## 10. Retirement lifecycle
 
 Retirement is stronger than revocation.
 
@@ -323,9 +303,9 @@ allocate the same logical app again
 new allocation != X
 ```
 
-This deployed regression is a known test gap for the current version branch.
+This deployed regression remains a known test gap.
 
-## 12. Browser workspace isolation
+## 11. Browser workspace isolation
 
 Workspace state is browser-local but still tenant-sensitive.
 
@@ -347,7 +327,7 @@ must not be migrated into a scoped tenant workspace because a shared browser/ori
 
 Workspace persistence is best-effort local storage. It is not the source of allocation or authorization truth.
 
-## 13. Persistence and upgrades
+## 12. Persistence and upgrades
 
 Stable-memory root names, field layouts, and stored identifier semantics become compatibility contracts once real deployments are expected to upgrade in place.
 
@@ -363,29 +343,26 @@ app_catalog
 Changing any of the following requires explicit migration once upgrade compatibility is promised:
 
 - root names;
-- v1 record/map layouts;
+- persisted record/map layouts;
 - meaning of physical ids;
 - meaning of logical ids;
 - relationships between grants and physical identities.
 
 Generated actor wrappers and lock metadata must be regenerated through the normal Neutron toolchain after source/schema changes. They should not be hand-edited as a migration mechanism.
 
-## 14. Package compatibility
+## 13. Package compatibility
 
 `multitenancy-neutron` does not define a replacement application package format.
 
 A standard upstream-compatible `.neutron` package must remain installable through the ordinary Neutron path. Multi-tenant pool functionality is layered around normal package preparation, compilation, deployment, and AppScope generation.
 
-This requirement is important for two reasons:
+This requirement is important because the repository should inherit Neutron application compatibility rather than maintain a forked ecosystem, and higher-level control planes should not need a special runtime package solely because the target host is multi-tenant.
 
-1. the repository should inherit future Neutron application compatibility rather than maintain a forked ecosystem;
-2. higher-level control planes should not need a special runtime package solely because the target host is multi-tenant.
-
-## 15. Deployment topology
+## 14. Deployment topology
 
 The tenant/allocation model is intentionally independent of deployment topology.
 
-The current development helpers can describe one or more host nodes, but host/shard selection is infrastructure policy rather than part of the core tenant data model.
+The development helpers can describe one or more host nodes, but host/shard selection is infrastructure policy rather than part of the core tenant data model.
 
 A future multi-host allocator may need capacity discovery and placement policy, but those concerns should not change the meaning of:
 
@@ -398,7 +375,7 @@ grant
 retirement
 ```
 
-## 16. Upstream conflict minimization
+## 15. Upstream conflict minimization
 
 The long-term maintenance goal is not merely working multi-tenancy. It is a small, reviewable delta from Neutron.
 
@@ -423,7 +400,7 @@ apps/kernel/src/workspace/store.ts
 
 See [UPSTREAM.md](../UPSTREAM.md) for the current classification and [TODO.md](../TODO.md) for the extraction plan.
 
-## 17. Test invariants
+## 16. Test invariants
 
 The multi-tenant test suite must preserve all of the following:
 
@@ -444,9 +421,9 @@ The multi-tenant test suite must preserve all of the following:
 
 Ordinary upstream Neutron package, owner, compiler, and runtime tests remain additional compatibility gates rather than being replaced by these tests.
 
-## 18. Current architectural cleanup target
+## 17. Architectural cleanup target
 
-The current branch proves the behavior but still places too much multi-tenant implementation directly inside upstream-derived files.
+The implementation proves the behavior but still places too much multi-tenant implementation directly inside upstream-derived files.
 
 The intended cleanup shape is:
 
@@ -465,4 +442,4 @@ multitenancy-neutron-owned modules
         +-- focused persistence helpers
 ```
 
-This separation is the main architectural objective before `version-0.0.1` is merged into `dev`.
+This separation is the main architectural cleanup objective after the behavior baseline and consuming application proof of concept are validated.
