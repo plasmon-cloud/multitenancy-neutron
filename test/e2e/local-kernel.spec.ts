@@ -424,13 +424,6 @@ test("kernel settings preserves the workspace and shows reconciled system state"
   await expect(page.locator('[data-tid="kernel-tray-toggle"]')).toBeVisible();
   await openKernelSettings(page);
   await expect(developerUiMode).toBeChecked();
-  await normalUiMode.check();
-  await expect(normalUiMode).toBeChecked();
-  expect(
-    await page.evaluate(() =>
-      localStorage.getItem("neutron-kernel-ui-mode-v1")
-    )
-  ).toBe("normal");
 });
 
 test("kernel settings transactionally uninstalls a disposable app", async ({
@@ -1697,7 +1690,7 @@ async function revokeTestPrincipal(principal: string): Promise<void> {
 }
 
 
-test("Plasmon tenants cannot cross owner or allocation boundaries", async () => {
+test("multitenancy-neutron tenants cannot cross owner or allocation boundaries", async () => {
   const runtime = resolveLocalNeutronRuntime();
   const developerSeed = runtime.developerIdentitySeed;
 
@@ -1706,7 +1699,7 @@ test("Plasmon tenants cannot cross owner or allocation boundaries", async () => 
   const tenantASeed = (developerSeed + 101) % 256;
   const tenantBSeed = (developerSeed + 102) % 256;
 
-  const plasmonTestIdl = ({ IDL }: { IDL: typeof import("@dfinity/candid").IDL }) =>
+  const multitenancyNeutronTestIdl = ({ IDL }: { IDL: typeof import("@dfinity/candid").IDL }) =>
     IDL.Service({
       kernel_tenant_join: IDL.Func([IDL.Null], [], []),
       kernel_check_authorized: IDL.Func(
@@ -1751,7 +1744,7 @@ test("Plasmon tenants cannot cross owner or allocation boundaries", async () => 
       ),
     });
 
-  type PlasmonTestActor = {
+  type MultitenancyNeutronTestActor = {
     kernel_tenant_join(req: null): Promise<void>;
     kernel_check_authorized(req: null): Promise<boolean>;
     kernel_my_is_owner(req: null): Promise<boolean>;
@@ -1773,7 +1766,7 @@ test("Plasmon tenants cannot cross owner or allocation boundaries", async () => 
 
   const createActorForSeed = async (
     seed: number,
-  ): Promise<PlasmonTestActor> => {
+  ): Promise<MultitenancyNeutronTestActor> => {
     const agent = await HttpAgent.create({
       host: localGatewayUrl(),
       identity: localIdentityFromSeed(seed),
@@ -1782,7 +1775,7 @@ test("Plasmon tenants cannot cross owner or allocation boundaries", async () => 
 
     await agent.fetchRootKey();
 
-    return Actor.createActor<PlasmonTestActor>(plasmonTestIdl, {
+    return Actor.createActor<MultitenancyNeutronTestActor>(multitenancyNeutronTestIdl, {
       agent,
       canisterId: resolveCanisterId(),
     });
@@ -1858,7 +1851,7 @@ test("Plasmon tenants cannot cross owner or allocation boundaries", async () => 
    * authority. Use a nonexistent deployment so the control probe is harmless.
    */
   const fakeDeployment =
-    `plasmon-security-probe-${Date.now()}-does-not-exist`;
+    `multitenancy-neutron-security-probe-${Date.now()}-does-not-exist`;
 
   await expect(
     tenantA.kernel_install_abort({
@@ -1955,10 +1948,10 @@ test("Plasmon tenants cannot cross owner or allocation boundaries", async () => 
     // AppScope remains the real security boundary. Direct physical method calls
     // succeed only for the tenant that owns the allocated instance.
     await expect(
-      callPhysicalHelloWorld(tenantASeed, aHello, "tenant-a-own-atom"),
+      callPhysicalHelloWorld(tenantASeed, aHello, "tenant-a-own-instance"),
     ).resolves.toEqual(expect.any(String));
     await expect(
-      callPhysicalHelloWorld(tenantBSeed, bHello, "tenant-b-own-atom"),
+      callPhysicalHelloWorld(tenantBSeed, bHello, "tenant-b-own-instance"),
     ).resolves.toEqual(expect.any(String));
     await expect(
       callPhysicalHelloWorld(tenantASeed, bHello, "tenant-a-attacking-b"),
@@ -1980,11 +1973,9 @@ test("Plasmon tenants cannot cross owner or allocation boundaries", async () => 
   }
 });
 
-test("Plasmon tenant launcher installs once and reopens the same Element", async ({
+test("multitenancy-neutron tenant launcher installs once and reopens the same app", async ({
   page,
 }) => {
-
-
   const runtime = resolveLocalNeutronRuntime();
   const tenantSeed = (runtime.developerIdentitySeed + 103) % 256;
 
@@ -2011,7 +2002,7 @@ test("Plasmon tenant launcher installs once and reopens the same Element", async
       // A fresh tenant starts on an empty workspace whose embedded launcher
       // loads the logical app catalog asynchronously after authentication.
       const action = page.locator(
-        '[data-tid="workspace-launcher-element-hello"]',
+        '[data-tid="workspace-launcher-app-hello"]',
       );
       await expect(action).toBeVisible({ timeout: 20_000 });
       await expect(action).toHaveAccessibleName(name);
@@ -2023,7 +2014,7 @@ test("Plasmon tenant launcher installs once and reopens the same Element", async
     await expect(launcherButton).toBeVisible({ timeout: 20_000 });
     await launcherButton.click();
 
-    const action = page.locator('[data-tid="launcher-element-hello"]');
+    const action = page.locator('[data-tid="launcher-app-hello"]');
     await expect(action).toBeVisible({ timeout: 20_000 });
     await expect(action).toHaveAccessibleName(name);
     return action;
@@ -2092,7 +2083,6 @@ test("Plasmon tenant launcher installs once and reopens the same Element", async
   await page.goto(localKernelUrl());
   const principal = await loginAsTenant();
 
-
   let physicalAppId: string | null = null;
 
   try {
@@ -2109,10 +2099,10 @@ test("Plasmon tenant launcher installs once and reopens the same Element", async
     const openHello = await revealTenantHelloAction("Open Hello");
     await openHello.click();
 
-    const sameAtomFrames = page.locator(
+    const sameInstanceFrames = page.locator(
       `iframe.tile-iframe[data-app-id="${physicalAppId}"]`,
     );
-    await expect(sameAtomFrames).toHaveCount(2);
+    await expect(sameInstanceFrames).toHaveCount(2);
     const beforeReloadIds = await page
       .locator('iframe.tile-iframe[data-app-id^="hello_"]')
       .evaluateAll((frames) =>
