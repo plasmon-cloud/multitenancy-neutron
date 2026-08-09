@@ -15,5 +15,8 @@ test-results
 tmp/
 .assetgen/
 /wagyu-alpha-*.png
+
+# Phase 1-9 Plasmon bootstrap scaffolding. These entries belong with the
+# temporary product-specific tooling and should disappear or move with it.
 /.plasmon-generated/
 /plasmon.ndeploy.json
