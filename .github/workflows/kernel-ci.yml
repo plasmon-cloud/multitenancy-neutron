@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
-      # Phase 1-9 historical branch scaffolding. Do not carry this Malstorm
-      # branch name into the final MTN CI/release policy.
-      - malstorm-phase1
+      # `dev` is the integration base for multitenancy-neutron release branches.
+      - dev
   pull_request:
   workflow_dispatch:
 
