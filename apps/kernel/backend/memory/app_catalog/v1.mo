@@ -1,7 +1,7 @@
 import Map "mo:core/Map";
 
 module {
-    // Stable MTN logical-app catalog metadata.
+    // Stable multitenancy-neutron logical-app catalog metadata.
     //
     // These keys are logical application ids, not physical Neutron app
     // instance ids. Keep this distinction intact: allocation maps logical ids
