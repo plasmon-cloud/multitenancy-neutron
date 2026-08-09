@@ -48,9 +48,10 @@ export function KernelTrayItem({
   const refreshGeneration = useRef(0);
   const canisterId = getNeutronId();
 
-  // MTN session authorization is broader than Neutron owner authorization.
-  // Keep metrics and Settings owner-gated: a joined tenant may use its granted
-  // AppScopes, but must not inherit kernel administration merely by logging in.
+  // multitenancy-neutron session authorization is broader than Neutron owner
+  // authorization. Keep metrics and Settings owner-gated: a joined tenant may
+  // use its granted AppScopes, but must not inherit kernel administration
+  // merely by logging in.
   const owner = useAuthStore((state) => state.owner);
 
   const refresh = useCallback(async () => {
