@@ -2,9 +2,8 @@ import Principal "mo:core/Principal";
 import CapabilityTypes "../capabilities/Types";
 
 module {
-    // MTN 0.2 deliberately implements one subject kind, but keeps the
-    // representation tagged so future session/account subjects can be added
-    // without redefining existing grants.
+    // multitenancy-neutron 0.2 implements one subject kind while keeping the
+    // representation tagged for future session/account subjects.
     public type SubjectRef = {
         #principal : Principal;
     };
@@ -28,8 +27,8 @@ module {
         #reshare;
     };
 
-    // Public semantic grant. The stored secret hash is intentionally not part
-    // of this type so list/inspect APIs cannot expose it accidentally.
+    // Public semantic grant. Raw bearer material and its stored hash are
+    // intentionally absent.
     public type AuthorizationGrant = {
         grant_id : Text;
         issuer_subject : SubjectRef;
@@ -76,10 +75,10 @@ module {
         rights : [ResourceRight];
     };
 
-    // Root grants are issued by the provider itself. The issuer scope is
-    // therefore the exact provider scope and is derived by the Kernel.
+    // Root issuance is AppScope-bound. The Kernel derives both issuer_scope and
+    // provider_scope from the exact capability instance; callers cannot select
+    // either scope in this input.
     public type IssueInput = {
-        provider_scope : AppScopeRef;
         resource : ResourceRef;
         audience : GrantAudience;
         consumer_element : ?Text;
@@ -94,17 +93,15 @@ module {
         token : Text;
     };
 
-    public type ListInput = {
-        issuer_scope : AppScopeRef;
-    };
-
     public type InspectInput = {
         grant_id : Text;
     };
 
+    // Safe pre-authentication launch metadata. Exact resource identity and all
+    // provider/issuer scope information are deliberately absent.
     public type GrantInspection = {
-        grant_id : Text;
-        resource : ResourceRef;
+        namespace : Text;
+        resource_type : Text;
         consumer_element : ?Text;
         rights : [ResourceRight];
         expires_at : ?Nat64;
@@ -124,8 +121,9 @@ module {
         grant_id : Text;
     };
 
+    // Resource epoch rotation is AppScope-bound. The exact provider scope is
+    // the capability's bound scope, never caller-selected data.
     public type RotateResourceInput = {
-        provider_scope : AppScopeRef;
         resource : ResourceRef;
     };
 
@@ -161,20 +159,6 @@ module {
 
     public type ProviderDispatch = AuthorizedCallRequest -> async* Blob;
 
-    // This capability is compiler-bound to the exact consumer AppScope. Apps
-    // do not supply a caller scope or provider scope to call/delegate/release.
-    public type AuthorizationCapabilityV1 = {
-        call : AuthorizedCallInput -> async* AuthorizedCallResult;
-        delegate : DelegateInput -> async* IssueResult;
-        release : ReleaseInput -> ();
-    };
-
-    // Providers register only a callback; the compiler/kernel binds it to the
-    // provider's own exact AppScope.
-    public type AuthorizationProviderV1 = {
-        register : ProviderDispatch -> ();
-    };
-
     public type AuthorizationError = {
         #invalid_request;
         #unauthenticated;
@@ -198,6 +182,20 @@ module {
         #err : AuthorizationError;
     };
 
+    // One compiler-delivered capability is bound to one exact AppScope. Both
+    // provider-side management and consumer-side lease use inherit that scope;
+    // no method accepts a caller-selectable issuer/provider/consumer scope.
+    public type AuthorizationCapabilityV1 = {
+        issue : IssueInput -> async* IssueResult;
+        list : () -> [AuthorizationGrant];
+        revoke : RevokeInput -> MutationResult;
+        rotate_resource : RotateResourceInput -> MutationResult;
+        register_provider : ProviderDispatch -> ();
+        call : AuthorizedCallInput -> async* AuthorizedCallResult;
+        delegate : DelegateInput -> async* IssueResult;
+        release : ReleaseInput -> ();
+    };
+
     public type AuditEvent = {
         id : Nat64;
         at : Nat64;
@@ -209,7 +207,7 @@ module {
         resource : ?ResourceRef;
     };
 
-    // Generic discovery: clients check for operation names, never a product or
+    // Generic discovery: clients check operation names, never a product or
     // release string.
     public type CapabilityDiscovery = {
         operations : [Text];
