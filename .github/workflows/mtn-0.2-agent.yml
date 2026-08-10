@@ -20,6 +20,10 @@ on:
       - apps/kernel/test/motoko/authorization_upgrade_persistence_test.mo
   workflow_dispatch:
 
+concurrency:
+  group: multitenancy-neutron-0.2-agent
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
