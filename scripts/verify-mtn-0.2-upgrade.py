@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "version-0.1.0"
+BASE = "origin/version-0.1.0"
 
 
 def git_show(path: str) -> str:
@@ -98,7 +98,10 @@ unchanged_paths = [
 ]
 for relative in unchanged_paths:
     current = (ROOT / relative).read_text()
-    require(current == git_show(relative), f"0.1 persistence/allocator source changed: {relative}")
+    require(
+        current == git_show(relative),
+        f"0.1 persistence/allocator source changed: {relative}",
+    )
 
 print("Upgrade schema gate passed: existing 0.1 roots/locks unchanged")
 print("Upgrade schema gate passed: three authorization v1 roots added without migrations")
