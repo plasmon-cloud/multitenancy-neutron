@@ -6,8 +6,8 @@ on:
       - version-0.2.0
     paths:
       - scripts/apply-mtn-0.2.py
-      - scripts/apply-mtn-0.2-test-fixes.py
       - scripts/apply-mtn-0.2-service-fixes.py
+      - scripts/apply-mtn-0.2-bound-api.py
       - .github/workflows/mtn-0.2-agent.yml
       - apps/kernel/backend/authorization/**
       - apps/kernel/backend/memory/authorization_grants/**
@@ -34,7 +34,7 @@ jobs:
           set -o pipefail
           python3 scripts/apply-mtn-0.2.py 2>&1 | tee /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-service-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
-          python3 scripts/apply-mtn-0.2-test-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
+          python3 scripts/apply-mtn-0.2-bound-api.py 2>&1 | tee -a /tmp/mtn-apply.log
           git diff --check 2>&1 | tee -a /tmp/mtn-apply.log
 
       - name: Install Nix
@@ -109,7 +109,7 @@ jobs:
             for file in /tmp/mtn-apply.log /tmp/mtn-deps.log /tmp/mtn-focused.log /tmp/mtn-package.log /tmp/mtn-allocator.log /tmp/mtn-core.log; do
               if [ -f "$file" ]; then
                 echo "===== $file ====="
-                tail -n 240 "$file"
+                tail -n 260 "$file"
                 echo
               fi
             done
