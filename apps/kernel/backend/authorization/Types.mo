@@ -1,3 +1,4 @@
+import Principal "mo:core/Principal";
 import CapabilityTypes "../capabilities/Types";
 
 module {
@@ -75,22 +76,21 @@ module {
         rights : [ResourceRight];
     };
 
+    // Root grants are issued by the provider itself. The issuer scope is
+    // therefore the exact provider scope and is derived by the Kernel.
     public type IssueInput = {
-        issuer_scope : AppScopeRef;
         provider_scope : AppScopeRef;
         resource : ResourceRef;
         audience : GrantAudience;
         consumer_element : ?Text;
         rights : [ResourceRight];
         expires_at : ?Nat64;
-        parent_grant_id : ?Text;
         max_redemptions : ?Nat;
     };
 
     public type IssueOutput = {
         grant : AuthorizationGrant;
-        // Returned exactly once. Neither value is persisted.
-        secret : Text;
+        // Returned exactly once. Raw bearer material is never persisted.
         token : Text;
     };
 
@@ -112,8 +112,7 @@ module {
     };
 
     public type RedeemInput = {
-        grant_id : Text;
-        secret : Text;
+        token : Text;
         consumer_scope : AppScopeRef;
     };
 
@@ -128,6 +127,17 @@ module {
     public type RotateResourceInput = {
         provider_scope : AppScopeRef;
         resource : ResourceRef;
+    };
+
+    // Delegation never accepts provider/resource from the caller. Those are
+    // inherited from the validated parent lease by construction.
+    public type DelegateInput = {
+        lease_id : Text;
+        audience : GrantAudience;
+        consumer_element : ?Text;
+        rights : [ResourceRight];
+        expires_at : ?Nat64;
+        max_redemptions : ?Nat;
     };
 
     public type AuthorizedCallInput = {
@@ -151,8 +161,18 @@ module {
 
     public type ProviderDispatch = AuthorizedCallRequest -> async* Blob;
 
+    // This capability is compiler-bound to the exact consumer AppScope. Apps
+    // do not supply a caller scope or provider scope to call/delegate/release.
     public type AuthorizationCapabilityV1 = {
         call : AuthorizedCallInput -> async* AuthorizedCallResult;
+        delegate : DelegateInput -> async* IssueResult;
+        release : ReleaseInput -> ();
+    };
+
+    // Providers register only a callback; the compiler/kernel binds it to the
+    // provider's own exact AppScope.
+    public type AuthorizationProviderV1 = {
+        register : ProviderDispatch -> ();
     };
 
     public type AuthorizationError = {
