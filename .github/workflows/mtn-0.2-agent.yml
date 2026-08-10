@@ -1,4 +1,4 @@
-name: MTN 0.2 Agent Gate
+name: multitenancy-neutron 0.2 Agent Gate
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
     paths:
       - scripts/apply-mtn-0.2.py
       - scripts/apply-mtn-0.2-test-fixes.py
+      - scripts/apply-mtn-0.2-service-fixes.py
       - .github/workflows/mtn-0.2-agent.yml
       - apps/kernel/backend/authorization/**
       - apps/kernel/backend/memory/authorization_grants/**
@@ -28,10 +29,11 @@ jobs:
         with:
           ref: version-0.2.0
 
-      - name: Apply MTN 0.2 integration patch
+      - name: Apply resource-capabilities integration patch
         run: |
           set -o pipefail
           python3 scripts/apply-mtn-0.2.py 2>&1 | tee /tmp/mtn-apply.log
+          python3 scripts/apply-mtn-0.2-service-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-test-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
           git diff --check 2>&1 | tee -a /tmp/mtn-apply.log
 
@@ -93,7 +95,7 @@ jobs:
           git config user.name "plasmon-cloud automation"
           git config user.email "actions@users.noreply.github.com"
           git add apps/kernel packages/neutron-compiler packages/neutron-tools packages/neutron-motoko-capabilities .github/workflows/kernel-ci.yml
-          git commit -m "Implement MTN 0.2 resource capabilities"
+          git commit -m "Implement multitenancy-neutron 0.2 resource capabilities"
           git push origin HEAD:version-0.2.0
 
       - name: Publish failure diagnostics
@@ -102,7 +104,7 @@ jobs:
           set -eu
           mkdir -p scripts
           {
-            echo "MTN 0.2 agent gate failed."
+            echo "multitenancy-neutron 0.2 agent gate failed."
             echo
             for file in /tmp/mtn-apply.log /tmp/mtn-deps.log /tmp/mtn-focused.log /tmp/mtn-package.log /tmp/mtn-allocator.log /tmp/mtn-core.log; do
               if [ -f "$file" ]; then
@@ -115,5 +117,5 @@ jobs:
           git config user.name "plasmon-cloud automation"
           git config user.email "actions@users.noreply.github.com"
           git add scripts/mtn-agent-last.log
-          git commit -m "Record MTN 0.2 agent gate failure" || exit 0
+          git commit -m "Record resource-capabilities agent gate failure" || exit 0
           git push origin HEAD:version-0.2.0
