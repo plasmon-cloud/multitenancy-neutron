@@ -1,4 +1,5 @@
 name: multitenancy-neutron 0.2 Agent Gate
+# Temporary serialized implementation gate; removed after a complete pass.
 
 on:
   push:
