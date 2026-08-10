@@ -2,6 +2,7 @@ import Array "mo:core/Array";
 import Blob "mo:core/Blob";
 import Map "mo:core/Map";
 import Nat8 "mo:core/Nat8";
+import Nat64 "mo:core/Nat64";
 import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
@@ -19,10 +20,13 @@ func scope(app : Text, uid : Nat64) : Types.AppScopeRef {
     { app_id = app; installation_uid = uid };
 };
 
+// Alice deliberately owns two provider sibling AppScopes. Provider-management
+// tests below prove the bound capability for one cannot act as the other.
 let aliceProvider = scope("alice_notes_001", 11);
 let aliceOtherProvider = scope("alice_other_001", 12);
 let bobConsumer = scope("bob_plasmon_001", 21);
 let bobSibling = scope("bob_other_001", 22);
+let bobConsumerTwin = scope("bob_plasmon_002", 23);
 let aliceConsumer = scope("alice_plasmon_001", 31);
 
 let note : Types.ResourceRef = {
@@ -35,6 +39,11 @@ let otherNote : Types.ResourceRef = {
     resource_id = "atom-note-2";
     resource_type = "notepad2/v1";
 };
+let rotatedNote : Types.ResourceRef = {
+    namespace = "plasmon.atom";
+    resource_id = "atom-note-3";
+    resource_type = "notepad2/v1";
+};
 
 let grants = GrantsMemory.init();
 let epochs = EpochsMemory.init();
@@ -44,9 +53,16 @@ var entropyCounter : Nat8 = 1;
 let active = Map.empty<Text, Bool>();
 
 func scopeKey(value : Types.AppScopeRef) : Text {
-    value.app_id # ":" # value.installation_uid.toText();
+    value.app_id # ":" # Nat64.toText(value.installation_uid);
 };
-for (value in [aliceProvider, aliceOtherProvider, bobConsumer, bobSibling, aliceConsumer].vals()) {
+for (value in [
+    aliceProvider,
+    aliceOtherProvider,
+    bobConsumer,
+    bobSibling,
+    bobConsumerTwin,
+    aliceConsumer,
+].vals()) {
     Map.add(active, Text.compare, scopeKey(value), true);
 };
 
@@ -60,16 +76,41 @@ func isActive(value : Types.AppScopeRef) : Bool {
 func owns(subject : Types.SubjectRef, value : Types.AppScopeRef) : Bool {
     let #principal(principal) = subject;
     if (principal == alice) {
-        value == aliceProvider or value == aliceOtherProvider or value == aliceConsumer;
+        value == aliceProvider or
+        value == aliceOtherProvider or
+        value == aliceConsumer;
     } else if (principal == bob) {
-        value == bobConsumer or value == bobSibling;
+        value == bobConsumer or
+        value == bobSibling or
+        value == bobConsumerTwin;
     } else false;
 };
 
+func subjectForScope(value : Types.AppScopeRef) : ?Types.SubjectRef {
+    if (
+        value == aliceProvider or
+        value == aliceOtherProvider or
+        value == aliceConsumer
+    ) {
+        ?#principal(alice);
+    } else if (
+        value == bobConsumer or
+        value == bobSibling or
+        value == bobConsumerTwin
+    ) {
+        ?#principal(bob);
+    } else null;
+};
+
 func element(value : Types.AppScopeRef) : ?Text {
-    if (value == bobConsumer or value == aliceConsumer) ?"plasmon"
+    if (
+        value == bobConsumer or
+        value == bobConsumerTwin or
+        value == aliceConsumer
+    ) ?"plasmon"
     else if (value == bobSibling) ?"other"
     else if (value == aliceProvider) ?"notepad2"
+    else if (value == aliceOtherProvider) ?"other_provider"
     else ?value.app_id;
 };
 
@@ -81,13 +122,14 @@ func freshRandom() : async* Blob {
     }));
 };
 
-func newService() : Service.Service {
+func newService() {
     Service.Service(
         grants,
         epochs,
         audit,
         isActive,
         owns,
+        subjectForScope,
         element,
         freshRandom,
         func() { clock },
@@ -130,7 +172,6 @@ func rootInput(
     expiresAt : ?Nat64,
 ) : Types.IssueInput {
     {
-        provider_scope = aliceProvider;
         resource;
         audience;
         consumer_element = consumerElement;
@@ -141,66 +182,136 @@ func rootInput(
 };
 
 let service = newService();
+let aliceProviderAuthorization = service.authorizationCapability(aliceProvider);
+let aliceOtherAuthorization = service.authorizationCapability(aliceOtherProvider);
+let consumer = service.authorizationCapability(bobConsumer);
+let sibling = service.authorizationCapability(bobSibling);
+let consumerTwin = service.authorizationCapability(bobConsumerTwin);
+let aliceConsumerAuthorization = service.authorizationCapability(aliceConsumer);
+
 let discovery = service.discovery();
+assert (Array.any(discovery.operations, func(value) { value == "authorization.issue" }));
 assert (Array.any(discovery.operations, func(value) { value == "authorization.redeem" }));
+assert (Array.any(discovery.operations, func(value) { value == "authorization.call" }));
 assert (discovery.rights == [#read, #write, #reshare]);
 
+// Provider/issuer management is bound to one exact AppScope. No management
+// input contains provider_scope or issuer_scope, so sibling substitution is
+// impossible by construction.
+let providerBGrant = issueOk(await* aliceOtherAuthorization.issue(
+    rootInput(otherNote, #principal(bob), [#read], ?"plasmon", null),
+));
+assert (providerBGrant.grant.provider_scope == aliceOtherProvider);
+assert (providerBGrant.grant.issuer_scope == aliceOtherProvider);
+
+let providerAAttempt = issueOk(await* aliceProviderAuthorization.issue(
+    rootInput(otherNote, #principal(bob), [#read], ?"plasmon", null),
+));
+assert (providerAAttempt.grant.provider_scope == aliceProvider);
+assert (providerAAttempt.grant.provider_scope != aliceOtherProvider);
+
+assert (Array.any(
+    aliceOtherAuthorization.list(),
+    func(grant) { grant.grant_id == providerBGrant.grant.grant_id },
+));
+assert (not Array.any(
+    aliceProviderAuthorization.list(),
+    func(grant) { grant.grant_id == providerBGrant.grant.grant_id },
+));
+assert (
+    aliceProviderAuthorization.revoke({
+        grant_id = providerBGrant.grant.grant_id;
+    }) == #err(#not_authorized)
+);
+
+let bEpochBefore = service.resourceEpochForTesting(aliceOtherProvider, otherNote);
+assert (aliceProviderAuthorization.rotate_resource({ resource = otherNote }) == #ok);
+assert (
+    service.resourceEpochForTesting(aliceOtherProvider, otherNote) == bEpochBefore
+);
+assert (aliceOtherAuthorization.rotate_resource({ resource = otherNote }) == #ok);
+assert (
+    service.resourceEpochForTesting(aliceOtherProvider, otherNote) ==
+    bEpochBefore + 1
+);
+
+let providerBValid = issueOk(await* aliceOtherAuthorization.issue(
+    rootInput(note, #principal(bob), [#read], ?"plasmon", null),
+));
+assert (Array.any(
+    aliceOtherAuthorization.list(),
+    func(grant) { grant.grant_id == providerBValid.grant.grant_id },
+));
+assert (
+    aliceOtherAuthorization.revoke({ grant_id = providerBValid.grant.grant_id }) ==
+    #ok
+);
+
 // any_authenticated is authenticated-only; anonymous redemption always fails.
-let anyGrant = issueOk(await* service.issue(
+let anyGrant = issueOk(await* aliceProviderAuthorization.issue(
     rootInput(note, #any_authenticated, [#read], ?"plasmon", null),
-    alice,
 ));
 expectRedeemDenied(await* service.redeem({
     token = anyGrant.token;
     consumer_scope = bobConsumer;
 }, anonymous));
 
-// Invalid secret, wrong principal, wrong consumer Element, and scope ownership.
-let readGrant = issueOk(await* service.issue(
+// Invalid secret, wrong principal, wrong Element, and wrong scope ownership.
+let readGrant = issueOk(await* aliceProviderAuthorization.issue(
     rootInput(note, #principal(bob), [#read], ?"plasmon", null),
-    alice,
 ));
 let invalidToken = "mtn2_" # readGrant.grant.grant_id # "_" #
     "0000000000000000000000000000000000000000000000000000000000000000";
-expectRedeemDenied(await* service.redeem({ token = invalidToken; consumer_scope = bobConsumer }, bob));
-expectRedeemDenied(await* service.redeem({ token = readGrant.token; consumer_scope = aliceConsumer }, alice));
-expectRedeemDenied(await* service.redeem({ token = readGrant.token; consumer_scope = bobSibling }, bob));
-expectRedeemDenied(await* service.redeem({ token = readGrant.token; consumer_scope = aliceProvider }, bob));
+expectRedeemDenied(await* service.redeem({
+    token = invalidToken;
+    consumer_scope = bobConsumer;
+}, bob));
+expectRedeemDenied(await* service.redeem({
+    token = readGrant.token;
+    consumer_scope = aliceConsumer;
+}, alice));
+expectRedeemDenied(await* service.redeem({
+    token = readGrant.token;
+    consumer_scope = bobSibling;
+}, bob));
+expectRedeemDenied(await* service.redeem({
+    token = readGrant.token;
+    consumer_scope = aliceProvider;
+}, bob));
 
-// Safe inspection does not require authentication and exposes only safe launch metadata.
+// Safe inspection is usable before authentication but does not reveal the
+// exact resource id or either AppScope.
 let inspected = service.inspect({ grant_id = readGrant.grant.grant_id });
 let ?inspection = inspected else Runtime.trap("expected safe inspection");
-assert (inspection.resource == note);
+assert (inspection.namespace == note.namespace);
+assert (inspection.resource_type == note.resource_type);
 assert (inspection.consumer_element == ?"plasmon");
 assert (inspection.rights == [#read]);
-
-// List returns semantic grants only; bearer material/hash are not part of its type.
-let listed = service.list({ issuer_scope = aliceProvider }, alice);
-assert (Array.any(listed, func(grant) { grant.grant_id == readGrant.grant.grant_id }));
-assert (service.list({ issuer_scope = aliceProvider }, bob).size() == 0);
+assert (inspection.expires_at == null);
+assert (not inspection.revoked);
 
 let lease = redeemOk(await* service.redeem({
     token = readGrant.token;
     consumer_scope = bobConsumer;
 }, bob));
-let consumer = service.consumerCapability(bobConsumer);
-let sibling = service.consumerCapability(bobSibling);
-let provider = service.consumerCapability(aliceProvider);
-let otherProvider = service.consumerCapability(aliceOtherProvider);
 var providerCalls : Nat = 0;
 var otherProviderCalls : Nat = 0;
-provider.register_provider(func(request : Types.AuthorizedCallRequest) : async* Blob {
-    providerCalls += 1;
-    assert (request.authorization.provider_scope == aliceProvider);
-    assert (request.authorization.consumer_scope == bobConsumer);
-    assert (request.authorization.resource == note);
-    assert (request.authorization.rights == [#read]);
-    Text.encodeUtf8("provider-ok");
-});
-otherProvider.register_provider(func(_request : Types.AuthorizedCallRequest) : async* Blob {
-    otherProviderCalls += 1;
-    Text.encodeUtf8("wrong-provider");
-});
+aliceProviderAuthorization.register_provider(
+    func(request : Types.AuthorizedCallRequest) : async* Blob {
+        providerCalls += 1;
+        assert (request.authorization.provider_scope == aliceProvider);
+        assert (request.authorization.consumer_scope == bobConsumer);
+        assert (request.authorization.resource == note);
+        assert (request.authorization.rights == [#read]);
+        Text.encodeUtf8("provider-ok");
+    },
+);
+aliceOtherAuthorization.register_provider(
+    func(_request : Types.AuthorizedCallRequest) : async* Blob {
+        otherProviderCalls += 1;
+        Text.encodeUtf8("wrong-provider");
+    },
+);
 
 // No grant/lease -> denied. Valid read reaches only the encoded provider.
 switch (await* consumer.call({
@@ -218,7 +329,9 @@ switch (await* consumer.call({
     operation = "read";
     // Caller-controlled bytes deliberately claim a different resource/provider.
     // The provider asserts trusted context remains note/aliceProvider above.
-    payload = Text.encodeUtf8("{\"resource_id\":\"atom-note-2\",\"provider\":\"alice_other_001\",\"rights\":[\"write\"]}");
+    payload = Text.encodeUtf8(
+        "{\"resource_id\":\"atom-note-2\",\"provider\":\"alice_other_001\",\"rights\":[\"write\"]}",
+    );
 })) {
     case (#ok(body)) assert (Text.decodeUtf8(body) == ?"provider-ok");
     case _ Runtime.trap("valid read lease must route");
@@ -226,7 +339,8 @@ switch (await* consumer.call({
 assert (providerCalls == 1);
 assert (otherProviderCalls == 0);
 
-// Read-only cannot write and the same lease is non-transferable to Bob's sibling AppScope.
+// Read-only cannot write and the lease is non-transferable to either another
+// Element or another AppScope of the same synthetic Element.
 switch (await* consumer.call({
     lease_id = lease.lease_id;
     requested_right = #write;
@@ -245,6 +359,41 @@ switch (await* sibling.call({
     case (#denied) {};
     case _ Runtime.trap("lease must not transfer to sibling AppScope");
 };
+switch (await* consumerTwin.call({
+    lease_id = lease.lease_id;
+    requested_right = #read;
+    operation = "read";
+    payload = Blob.fromArray([]);
+})) {
+    case (#denied) {};
+    case _ Runtime.trap("lease must not transfer to another same-Element AppScope");
+};
+
+// A read/write grant permits write but cannot delegate without reshare.
+let readWriteGrant = issueOk(await* aliceProviderAuthorization.issue(
+    rootInput(note, #principal(bob), [#read, #write], ?"plasmon", null),
+));
+let readWriteLease = redeemOk(await* service.redeem({
+    token = readWriteGrant.token;
+    consumer_scope = bobConsumer;
+}, bob));
+switch (await* consumer.call({
+    lease_id = readWriteLease.lease_id;
+    requested_right = #write;
+    operation = "write";
+    payload = Blob.fromArray([]);
+})) {
+    case (#ok(_)) {};
+    case _ Runtime.trap("read/write lease must write");
+};
+expectIssueDenied(await* consumer.delegate({
+    lease_id = readWriteLease.lease_id;
+    audience = #any_authenticated;
+    consumer_element = ?"plasmon";
+    rights = [#read];
+    expires_at = null;
+    max_redemptions = null;
+}));
 
 // Release removes only this ephemeral lease.
 consumer.release({ lease_id = lease.lease_id });
@@ -259,19 +408,26 @@ switch (await* consumer.call({
 };
 
 // Expiry and revocation are checked both at redemption and on cached leases.
-let expiring = issueOk(await* service.issue(
+let expiring = issueOk(await* aliceProviderAuthorization.issue(
     rootInput(note, #principal(bob), [#read], ?"plasmon", ?(clock + 100)),
-    alice,
 ));
 clock += 101;
-expectRedeemDenied(await* service.redeem({ token = expiring.token; consumer_scope = bobConsumer }, bob));
+expectRedeemDenied(await* service.redeem({
+    token = expiring.token;
+    consumer_scope = bobConsumer;
+}, bob));
 
-let revocable = issueOk(await* service.issue(
+let revocable = issueOk(await* aliceProviderAuthorization.issue(
     rootInput(note, #principal(bob), [#read], ?"plasmon", null),
-    alice,
 ));
-let revocableLease = redeemOk(await* service.redeem({ token = revocable.token; consumer_scope = bobConsumer }, bob));
-assert (service.revoke({ grant_id = revocable.grant.grant_id }, alice) == #ok);
+let revocableLease = redeemOk(await* service.redeem({
+    token = revocable.token;
+    consumer_scope = bobConsumer;
+}, bob));
+assert (
+    aliceProviderAuthorization.revoke({ grant_id = revocable.grant.grant_id }) ==
+    #ok
+);
 switch (await* consumer.call({
     lease_id = revocableLease.lease_id;
     requested_right = #read;
@@ -281,16 +437,27 @@ switch (await* consumer.call({
     case (#denied) {};
     case _ Runtime.trap("revocation must invalidate cached lease");
 };
-expectRedeemDenied(await* service.redeem({ token = revocable.token; consumer_scope = bobConsumer }, bob));
+expectRedeemDenied(await* service.redeem({
+    token = revocable.token;
+    consumer_scope = bobConsumer;
+}, bob));
 
-// Resource epoch rotation invalidates all prior grants/leases for exactly this resource.
-let rotatable = issueOk(await* service.issue(
-    rootInput(otherNote, #principal(bob), [#read], ?"plasmon", null),
-    alice,
+// Resource epoch rotation invalidates all prior grants/leases for exactly this
+// provider/resource pair.
+let rotatable = issueOk(await* aliceProviderAuthorization.issue(
+    rootInput(rotatedNote, #principal(bob), [#read], ?"plasmon", null),
 ));
-let rotatedLease = redeemOk(await* service.redeem({ token = rotatable.token; consumer_scope = bobConsumer }, bob));
-assert (service.rotateResource({ provider_scope = aliceProvider; resource = otherNote }, alice) == #ok);
-expectRedeemDenied(await* service.redeem({ token = rotatable.token; consumer_scope = bobConsumer }, bob));
+let rotatedLease = redeemOk(await* service.redeem({
+    token = rotatable.token;
+    consumer_scope = bobConsumer;
+}, bob));
+assert (
+    aliceProviderAuthorization.rotate_resource({ resource = rotatedNote }) == #ok
+);
+expectRedeemDenied(await* service.redeem({
+    token = rotatable.token;
+    consumer_scope = bobConsumer;
+}, bob));
 switch (await* consumer.call({
     lease_id = rotatedLease.lease_id;
     requested_right = #read;
@@ -302,19 +469,28 @@ switch (await* consumer.call({
 };
 
 // Retired/inactive consumer and provider scopes fail closed.
-let activeGrant = issueOk(await* service.issue(
+let activeGrant = issueOk(await* aliceProviderAuthorization.issue(
     rootInput(note, #principal(bob), [#read], ?"plasmon", null),
-    alice,
 ));
 Map.add(active, Text.compare, scopeKey(bobConsumer), false);
-expectRedeemDenied(await* service.redeem({ token = activeGrant.token; consumer_scope = bobConsumer }, bob));
+expectRedeemDenied(await* service.redeem({
+    token = activeGrant.token;
+    consumer_scope = bobConsumer;
+}, bob));
 Map.add(active, Text.compare, scopeKey(bobConsumer), true);
 Map.add(active, Text.compare, scopeKey(aliceProvider), false);
-expectRedeemDenied(await* service.redeem({ token = activeGrant.token; consumer_scope = bobConsumer }, bob));
+expectRedeemDenied(await* service.redeem({
+    token = activeGrant.token;
+    consumer_scope = bobConsumer;
+}, bob));
 Map.add(active, Text.compare, scopeKey(aliceProvider), true);
 
-// Delegation is lease-based: no reshare -> denied; child rights cannot increase.
-let noReshareLease = redeemOk(await* service.redeem({ token = activeGrant.token; consumer_scope = bobConsumer }, bob));
+// Delegation is lease-based: no reshare -> denied; child rights and lifetime
+// cannot exceed the parent.
+let noReshareLease = redeemOk(await* service.redeem({
+    token = activeGrant.token;
+    consumer_scope = bobConsumer;
+}, bob));
 expectIssueDenied(await* consumer.delegate({
     lease_id = noReshareLease.lease_id;
     audience = #any_authenticated;
@@ -324,11 +500,13 @@ expectIssueDenied(await* consumer.delegate({
     max_redemptions = null;
 }));
 
-let reshareRoot = issueOk(await* service.issue(
+let reshareRoot = issueOk(await* aliceProviderAuthorization.issue(
     rootInput(note, #principal(bob), [#read, #reshare], ?"plasmon", null),
-    alice,
 ));
-let reshareLease = redeemOk(await* service.redeem({ token = reshareRoot.token; consumer_scope = bobConsumer }, bob));
+let reshareLease = redeemOk(await* service.redeem({
+    token = reshareRoot.token;
+    consumer_scope = bobConsumer;
+}, bob));
 expectIssueDenied(await* consumer.delegate({
     lease_id = reshareLease.lease_id;
     audience = #any_authenticated;
@@ -337,6 +515,29 @@ expectIssueDenied(await* consumer.delegate({
     expires_at = null;
     max_redemptions = null;
 }));
+
+let finiteParent = issueOk(await* aliceProviderAuthorization.issue(
+    rootInput(
+        note,
+        #principal(bob),
+        [#read, #reshare],
+        ?"plasmon",
+        ?(clock + 1_000),
+    ),
+));
+let finiteLease = redeemOk(await* service.redeem({
+    token = finiteParent.token;
+    consumer_scope = bobConsumer;
+}, bob));
+expectIssueDenied(await* consumer.delegate({
+    lease_id = finiteLease.lease_id;
+    audience = #any_authenticated;
+    consumer_element = ?"plasmon";
+    rights = [#read];
+    expires_at = ?(clock + 1_001);
+    max_redemptions = null;
+}));
+
 let child = issueOk(await* consumer.delegate({
     lease_id = reshareLease.lease_id;
     audience = #principal(alice);
@@ -348,9 +549,15 @@ let child = issueOk(await* consumer.delegate({
 assert (child.grant.provider_scope == aliceProvider);
 assert (child.grant.resource == note);
 assert (child.grant.parent_grant_id == ?reshareRoot.grant.grant_id);
-let childLease = redeemOk(await* service.redeem({ token = child.token; consumer_scope = aliceConsumer }, alice));
-assert (service.revoke({ grant_id = reshareRoot.grant.grant_id }, alice) == #ok);
-switch (await* service.consumerCapability(aliceConsumer).call({
+let childLease = redeemOk(await* service.redeem({
+    token = child.token;
+    consumer_scope = aliceConsumer;
+}, alice));
+assert (
+    aliceProviderAuthorization.revoke({ grant_id = reshareRoot.grant.grant_id }) ==
+    #ok
+);
+switch (await* aliceConsumerAuthorization.call({
     lease_id = childLease.lease_id;
     requested_right = #read;
     operation = "read";
@@ -360,16 +567,36 @@ switch (await* service.consumerCapability(aliceConsumer).call({
     case _ Runtime.trap("parent revocation must invalidate child lease");
 };
 
-// Restart creates a fresh service with no leases/providers but preserves grants,
-// revocations, redemption counts, resource epochs, and bearer-secret hashes.
-let persistent = issueOk(await* service.issue(
+// Redemption limits are persistent grant state.
+let limited = issueOk(await* aliceProviderAuthorization.issue({
+    resource = note;
+    audience = #principal(bob);
+    consumer_element = ?"plasmon";
+    rights = [#read];
+    expires_at = null;
+    max_redemptions = ?1;
+}));
+ignore redeemOk(await* service.redeem({
+    token = limited.token;
+    consumer_scope = bobConsumer;
+}, bob));
+expectRedeemDenied(await* service.redeem({
+    token = limited.token;
+    consumer_scope = bobConsumer;
+}, bob));
+
+// Restart creates a fresh service with no leases/providers while preserving
+// grant/revocation/redemption/epoch state and bearer-secret hashes.
+let persistentGrant = issueOk(await* aliceProviderAuthorization.issue(
     rootInput(note, #principal(bob), [#read], ?"plasmon", null),
-    alice,
 ));
-let beforeRestart = redeemOk(await* service.redeem({ token = persistent.token; consumer_scope = bobConsumer }, bob));
+let beforeRestart = redeemOk(await* service.redeem({
+    token = persistentGrant.token;
+    consumer_scope = bobConsumer;
+}, bob));
 let restarted = newService();
 assert (restarted.leaseCountForTesting() == 0);
-switch (await* restarted.consumerCapability(bobConsumer).call({
+switch (await* restarted.authorizationCapability(bobConsumer).call({
     lease_id = beforeRestart.lease_id;
     requested_right = #read;
     operation = "read";
@@ -378,24 +605,25 @@ switch (await* restarted.consumerCapability(bobConsumer).call({
     case (#denied) {};
     case _ Runtime.trap("old lease must die on restart");
 };
-ignore redeemOk(await* restarted.redeem({ token = persistent.token; consumer_scope = bobConsumer }, bob));
-expectRedeemDenied(await* restarted.redeem({ token = revocable.token; consumer_scope = bobConsumer }, bob));
-assert (restarted.resourceEpochForTesting(aliceProvider, otherNote) == 1);
+ignore redeemOk(await* restarted.redeem({
+    token = persistentGrant.token;
+    consumer_scope = bobConsumer;
+}, bob));
+expectRedeemDenied(await* restarted.redeem({
+    token = revocable.token;
+    consumer_scope = bobConsumer;
+}, bob));
+assert (restarted.resourceEpochForTesting(aliceProvider, rotatedNote) == 1);
+assert (Array.any(
+    restarted.authorizationCapability(aliceProvider).list(),
+    func(grant) { grant.grant_id == persistentGrant.grant.grant_id },
+));
 
-// Stable state contains a hash only, never the full bearer token/raw secret.
-let ?storedPersistent = Map.get(grants.grants, Text.compare, persistent.grant.grant_id) else {
-    Runtime.trap("expected persistent grant");
-};
+// Stable state contains a one-way hash only, never the full bearer token.
+let ?storedPersistent = Map.get(
+    grants.grants,
+    Text.compare,
+    persistentGrant.grant.grant_id,
+) else Runtime.trap("expected persistent grant");
 assert (storedPersistent.secret_hash.size() == 32);
-assert (storedPersistent.secret_hash != Text.encodeUtf8(persistent.token));
-
-// Root issuance cannot substitute a provider scope the caller does not own.
-expectIssueDenied(await* service.issue({
-    provider_scope = bobConsumer;
-    resource = note;
-    audience = #principal(bob);
-    consumer_element = ?"plasmon";
-    rights = [#read];
-    expires_at = null;
-    max_redemptions = null;
-}, alice));
+assert (storedPersistent.secret_hash != Text.encodeUtf8(persistentGrant.token));
