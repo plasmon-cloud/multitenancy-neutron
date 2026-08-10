@@ -9,12 +9,15 @@ on:
       - scripts/apply-mtn-0.2-service-fixes.py
       - scripts/apply-mtn-0.2-bound-api.py
       - scripts/apply-mtn-0.2-compile-fixes.py
+      - scripts/apply-mtn-0.2-upgrade-test.py
+      - scripts/verify-mtn-0.2-upgrade.py
       - .github/workflows/mtn-0.2-agent.yml
       - apps/kernel/backend/authorization/**
       - apps/kernel/backend/memory/authorization_grants/**
       - apps/kernel/backend/memory/authorization_resource_epochs/**
       - apps/kernel/backend/memory/authorization_audit/**
       - apps/kernel/test/motoko/authorization_service_test.mo
+      - apps/kernel/test/motoko/authorization_upgrade_persistence_test.mo
   workflow_dispatch:
 
 permissions:
@@ -29,6 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: version-0.2.0
+          fetch-depth: 0
 
       - name: Apply resource-capabilities integration patch
         run: |
@@ -37,6 +41,7 @@ jobs:
           python3 scripts/apply-mtn-0.2-service-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-bound-api.py 2>&1 | tee -a /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-compile-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
+          python3 scripts/apply-mtn-0.2-upgrade-test.py 2>&1 | tee -a /tmp/mtn-apply.log
           git diff --check 2>&1 | tee -a /tmp/mtn-apply.log
 
       - name: Install Nix
@@ -52,13 +57,13 @@ jobs:
             npm ci
           ' 2>&1 | tee /tmp/mtn-deps.log
 
-      - name: Focused authorization Motoko test
+      - name: Focused authorization Motoko tests
         run: |
           set -o pipefail
           nix develop --command bash -lc '
             set -euxo pipefail
             cd apps/kernel
-            MOTOKO_TEST=authorization_service_test.mo bun test/motoko/run.ts
+            MOTOKO_TEST=authorization_service_test.mo,authorization_upgrade_persistence_test.mo bun test/motoko/run.ts
           ' 2>&1 | tee /tmp/mtn-focused.log
 
       - name: Kernel package
@@ -68,6 +73,11 @@ jobs:
             set -euxo pipefail
             npm --workspace neutron-kernel run package
           ' 2>&1 | tee /tmp/mtn-package.log
+
+      - name: Upgrade schema and lock acceptance
+        run: |
+          set -o pipefail
+          python3 scripts/verify-mtn-0.2-upgrade.py 2>&1 | tee /tmp/mtn-upgrade.log
 
       - name: Existing allocator regression
         run: |
@@ -90,14 +100,33 @@ jobs:
         if: success()
         run: |
           set -euxo pipefail
-          if git diff --quiet; then
-            echo "No integration changes to commit"
-            exit 0
+          if ! git diff --quiet; then
+            git config user.name "plasmon-cloud automation"
+            git config user.email "actions@users.noreply.github.com"
+            git add apps/kernel packages/neutron-compiler packages/neutron-tools packages/neutron-motoko-capabilities .github/workflows/kernel-ci.yml
+            git commit -m "Implement multitenancy-neutron 0.2 resource capabilities [skip ci]"
+            git push origin HEAD:version-0.2.0
           fi
+          git rev-parse HEAD > /tmp/mtn-tested-sha
+
+      - name: Publish success evidence
+        if: success()
+        run: |
+          set -eu
+          {
+            echo "multitenancy-neutron 0.2 agent gate passed."
+            echo "tested_sha=$(cat /tmp/mtn-tested-sha)"
+            echo
+            for file in /tmp/mtn-focused.log /tmp/mtn-package.log /tmp/mtn-upgrade.log /tmp/mtn-allocator.log /tmp/mtn-core.log; do
+              echo "===== $file ====="
+              tail -n 320 "$file"
+              echo
+            done
+          } > scripts/mtn-agent-last.log
           git config user.name "plasmon-cloud automation"
           git config user.email "actions@users.noreply.github.com"
-          git add apps/kernel packages/neutron-compiler packages/neutron-tools packages/neutron-motoko-capabilities .github/workflows/kernel-ci.yml
-          git commit -m "Implement multitenancy-neutron 0.2 resource capabilities"
+          git add scripts/mtn-agent-last.log
+          git commit -m "Record resource-capabilities gate success [skip ci]"
           git push origin HEAD:version-0.2.0
 
       - name: Publish failure diagnostics
@@ -108,10 +137,10 @@ jobs:
           {
             echo "multitenancy-neutron 0.2 agent gate failed."
             echo
-            for file in /tmp/mtn-apply.log /tmp/mtn-deps.log /tmp/mtn-focused.log /tmp/mtn-package.log /tmp/mtn-allocator.log /tmp/mtn-core.log; do
+            for file in /tmp/mtn-apply.log /tmp/mtn-deps.log /tmp/mtn-focused.log /tmp/mtn-package.log /tmp/mtn-upgrade.log /tmp/mtn-allocator.log /tmp/mtn-core.log; do
               if [ -f "$file" ]; then
                 echo "===== $file ====="
-                tail -n 260 "$file"
+                tail -n 320 "$file"
                 echo
               fi
             done
@@ -119,5 +148,5 @@ jobs:
           git config user.name "plasmon-cloud automation"
           git config user.email "actions@users.noreply.github.com"
           git add scripts/mtn-agent-last.log
-          git commit -m "Record resource-capabilities agent gate failure" || exit 0
+          git commit -m "Record resource-capabilities agent gate failure [skip ci]" || exit 0
           git push origin HEAD:version-0.2.0
