@@ -1,4 +1,166 @@
 module {
+    public type AuthorizationSubjectV1 = {
+        #principal : Principal;
+    };
+
+    // Structural identity used only inside the authorization leaf API. The
+    // compiler supplies capabilities already bound to one exact installation;
+    // apps cannot construct authority merely by constructing this record.
+    public type AuthorizationScopeV1 = {
+        app_id : Text;
+        installation_uid : Nat64;
+    };
+
+    public type AuthorizationResourceV1 = {
+        namespace : Text;
+        resource_id : Text;
+        resource_type : Text;
+    };
+
+    public type AuthorizationAudienceV1 = {
+        #any_authenticated;
+        #principal : Principal;
+    };
+
+    public type AuthorizationRightV1 = {
+        #read;
+        #write;
+        #reshare;
+    };
+
+    public type AuthorizationGrantV1 = {
+        grant_id : Text;
+        issuer_subject : AuthorizationSubjectV1;
+        issuer_scope : AuthorizationScopeV1;
+        provider_scope : AuthorizationScopeV1;
+        resource : AuthorizationResourceV1;
+        audience : AuthorizationAudienceV1;
+        consumer_element : ?Text;
+        rights : [AuthorizationRightV1];
+        created_at : Nat64;
+        expires_at : ?Nat64;
+        revoked_at : ?Nat64;
+        parent_grant_id : ?Text;
+        resource_authorization_epoch : Nat64;
+        max_redemptions : ?Nat;
+        redemption_count : Nat;
+    };
+
+    public type AuthorizationIssueInputV1 = {
+        resource : AuthorizationResourceV1;
+        audience : AuthorizationAudienceV1;
+        consumer_element : ?Text;
+        rights : [AuthorizationRightV1];
+        expires_at : ?Nat64;
+        max_redemptions : ?Nat;
+    };
+
+    public type AuthorizationIssueOutputV1 = {
+        grant : AuthorizationGrantV1;
+        // The bearer token is returned once so the issuing app can share it.
+        // No stored hash or persistence representation is part of this API.
+        token : Text;
+    };
+
+    public type AuthorizationErrorV1 = {
+        #invalid_request;
+        #unauthenticated;
+        #not_authorized;
+        #denied;
+        #unavailable;
+    };
+
+    public type AuthorizationIssueResultV1 = {
+        #ok : AuthorizationIssueOutputV1;
+        #err : AuthorizationErrorV1;
+    };
+
+    public type AuthorizationMutationResultV1 = {
+        #ok;
+        #err : AuthorizationErrorV1;
+    };
+
+    public type AuthorizationLeaseV1 = {
+        lease_id : Text;
+        grant_id : Text;
+        subject : AuthorizationSubjectV1;
+        consumer_scope : AuthorizationScopeV1;
+        provider_scope : AuthorizationScopeV1;
+        resource : AuthorizationResourceV1;
+        rights : [AuthorizationRightV1];
+        issued_at : Nat64;
+        expires_at : Nat64;
+    };
+
+    public type AuthorizationContextV1 = {
+        grant_id : Text;
+        lease_id : Text;
+        subject : AuthorizationSubjectV1;
+        consumer_scope : AuthorizationScopeV1;
+        provider_scope : AuthorizationScopeV1;
+        resource : AuthorizationResourceV1;
+        rights : [AuthorizationRightV1];
+    };
+
+    // Provider and resource are deliberately absent. The kernel derives both
+    // from the validated lease before invoking the provider callback.
+    public type AuthorizationCallInputV1 = {
+        lease_id : Text;
+        requested_right : AuthorizationRightV1;
+        operation : Text;
+        payload : Blob;
+    };
+
+    public type AuthorizationCallRequestV1 = {
+        authorization : AuthorizationContextV1;
+        operation : Text;
+        payload : Blob;
+    };
+
+    public type AuthorizationCallResultV1 = {
+        #ok : Blob;
+        #denied;
+        #provider_unavailable;
+    };
+
+    public type AuthorizationProviderDispatchV1 =
+        AuthorizationCallRequestV1 -> async* Blob;
+
+    public type AuthorizationDelegateInputV1 = {
+        lease_id : Text;
+        audience : AuthorizationAudienceV1;
+        consumer_element : ?Text;
+        rights : [AuthorizationRightV1];
+        expires_at : ?Nat64;
+        max_redemptions : ?Nat;
+    };
+
+    public type AuthorizationRevokeInputV1 = {
+        grant_id : Text;
+    };
+
+    public type AuthorizationRotateResourceInputV1 = {
+        resource : AuthorizationResourceV1;
+    };
+
+    public type AuthorizationReleaseInputV1 = {
+        lease_id : Text;
+    };
+
+    // Compiler-delivered leaf capability. The surrounding environment binds
+    // this value to the app's exact installation; there is no scope selector,
+    // service object, raw kernel handle, or capability factory here.
+    public type AuthorizationV1 = {
+        issue : AuthorizationIssueInputV1 -> async* AuthorizationIssueResultV1;
+        list : () -> [AuthorizationGrantV1];
+        revoke : AuthorizationRevokeInputV1 -> AuthorizationMutationResultV1;
+        rotate_resource : AuthorizationRotateResourceInputV1 -> AuthorizationMutationResultV1;
+        register_provider : AuthorizationProviderDispatchV1 -> ();
+        call : AuthorizationCallInputV1 -> async* AuthorizationCallResultV1;
+        delegate : AuthorizationDelegateInputV1 -> async* AuthorizationIssueResultV1;
+        release : AuthorizationReleaseInputV1 -> ();
+    };
+
     public type DeferredTimerPhaseV1 = {
         #waiting;
         #running;
