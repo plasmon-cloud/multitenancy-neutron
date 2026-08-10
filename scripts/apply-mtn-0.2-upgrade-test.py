@@ -11,6 +11,24 @@ if '"authorization_upgrade_persistence_test.mo"' not in text:
     text = text.replace(needle, addition, 1)
 runner.write_text(text)
 
+for test_path in [
+    "apps/kernel/test/motoko/authorization_service_test.mo",
+    "apps/kernel/test/motoko/authorization_upgrade_persistence_test.mo",
+]:
+    p = Path(test_path)
+    text = p.read_text()
+    text = text.replace(
+        "func newService() {\n    Service.Service(\n",
+        "func newService() : Service.Service {\n    Service.Service(\n",
+        1,
+    )
+    text = text.replace(
+        "        func() { clock },\n    );\n};\n\nfunc issueOk",
+        "        func() { clock },\n    )\n};\n\nfunc issueOk",
+        1,
+    )
+    p.write_text(text)
+
 test = Path("apps/kernel/test/motoko/authorization_service_test.mo")
 text = test.read_text()
 old = '''        assert (request.authorization.resource == note);\n        assert (request.authorization.rights == [#read]);\n        Text.encodeUtf8("provider-ok");\n'''
