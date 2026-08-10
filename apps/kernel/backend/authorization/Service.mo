@@ -18,6 +18,7 @@ module {
     func isAnonymous(principal : Principal) : Bool {
         principal == Principal.fromText("2vxsx-fae");
     };
+
     let LEASE_LIFETIME_NS : Nat64 = 300_000_000_000;
     let MAX_ANCESTRY_DEPTH : Nat = 64;
     let TOKEN_PREFIX = "mtn2";
@@ -63,6 +64,8 @@ module {
 
         // Safe pre-authentication metadata inspection. Exact resource identity,
         // provider/issuer scope, bearer material, and storage paths are absent.
+        // `revoked` represents effective non-expiry invalidation, including
+        // issuer ownership/liveness, resource epochs, and invalid ancestry.
         public func inspect(input : Types.InspectInput) : ?Types.GrantInspection {
             let ?stored = Map.get(grantsMem.grants, Text.compare, input.grant_id) else {
                 return null;
@@ -74,9 +77,7 @@ module {
                 consumer_element = grant.consumer_element;
                 rights = grant.rights;
                 expires_at = grant.expires_at;
-                revoked =
-                    grant.revoked_at != null or
-                    not grantEpochCurrent(grant);
+                revoked = effectivelyRevoked(grant);
             };
         };
 
@@ -110,7 +111,6 @@ module {
                 not CapabilityScope.valid(input.consumer_scope) or
                 not scopeActive(input.consumer_scope) or
                 not subjectOwnsScope(subject, input.consumer_scope) or
-                not scopeActive(grant.provider_scope) or
                 not consumerElementAllows(
                     grant.consumer_element,
                     input.consumer_scope,
@@ -121,10 +121,39 @@ module {
             let leaseRandom = await* freshRandom();
             if (leaseRandom.size() < 32) return #err(#unavailable);
 
+            // freshRandom is an await boundary. Re-read and revalidate every
+            // authority-bearing fact after it. No await occurs between this
+            // final validation and the persistent redemption-count increment.
+            let ?currentStored = Map.get(
+                grantsMem.grants,
+                Text.compare,
+                token.grant_id,
+            ) else return #err(#denied);
+
+            if (not secretMatches(
+                token.grant_id,
+                token.secret,
+                currentStored.secret_hash,
+            )) return #err(#denied);
+
+            let currentGrant = currentStored.grant;
+            if (
+                not grantUsable(currentGrant) or
+                not audienceAllows(currentGrant.audience, subject) or
+                not CapabilityScope.valid(input.consumer_scope) or
+                not scopeActive(input.consumer_scope) or
+                not subjectOwnsScope(subject, input.consumer_scope) or
+                not consumerElementAllows(
+                    currentGrant.consumer_element,
+                    input.consumer_scope,
+                ) or
+                not redemptionAvailable(currentGrant)
+            ) return #err(#denied);
+
             let leaseId = hex(leaseRandom);
             let issuedAt = now();
             let nominalLeaseExpiry = issuedAt + LEASE_LIFETIME_NS;
-            let effectiveLeaseExpiry = switch (grant.expires_at) {
+            let effectiveLeaseExpiry = switch (currentGrant.expires_at) {
                 case (?grantExpiry) {
                     if (grantExpiry < nominalLeaseExpiry) grantExpiry
                     else nominalLeaseExpiry;
@@ -134,28 +163,28 @@ module {
 
             let lease : Types.AuthorizationLease = {
                 lease_id = leaseId;
-                grant_id = grant.grant_id;
+                grant_id = currentGrant.grant_id;
                 subject;
                 consumer_scope = input.consumer_scope;
-                provider_scope = grant.provider_scope;
-                resource = grant.resource;
-                rights = grant.rights;
+                provider_scope = currentGrant.provider_scope;
+                resource = currentGrant.resource;
+                rights = currentGrant.rights;
                 issued_at = issuedAt;
                 expires_at = effectiveLeaseExpiry;
             };
 
             let updatedGrant = copyGrantWithRedemptionCount(
-                grant,
-                grant.redemption_count + 1,
+                currentGrant,
+                currentGrant.redemption_count + 1,
             );
 
             Map.add(
                 grantsMem.grants,
                 Text.compare,
-                grant.grant_id,
+                currentGrant.grant_id,
                 {
                     grant = updatedGrant;
-                    secret_hash = stored.secret_hash;
+                    secret_hash = currentStored.secret_hash;
                 },
             );
 
@@ -163,11 +192,11 @@ module {
 
             appendAudit(
                 "redeem",
-                ?grant.grant_id,
+                ?currentGrant.grant_id,
                 ?subject,
                 ?input.consumer_scope,
-                ?grant.provider_scope,
-                ?grant.resource,
+                ?currentGrant.provider_scope,
+                ?currentGrant.resource,
             );
 
             #ok(lease);
@@ -240,24 +269,35 @@ module {
             providerScope : Types.AppScopeRef,
             input : Types.IssueInput,
         ) : async* Types.IssueResult {
-            if (
-                not CapabilityScope.valid(providerScope) or
-                not scopeActive(providerScope) or
-                not validResource(input.resource) or
-                not validRights(input.rights) or
-                expiredAtCreation(input.expires_at)
-            ) return #err(#not_authorized);
-
-            let ?subject = scopeSubject(providerScope) else {
+            if (not validIssueRequest(providerScope, input)) {
                 return #err(#not_authorized);
             };
 
-            if (not subjectOwnsScope(subject, providerScope)) {
+            let ?initialSubject = scopeSubject(providerScope) else {
+                return #err(#not_authorized);
+            };
+            if (not subjectOwnsScope(initialSubject, providerScope)) {
                 return #err(#not_authorized);
             };
 
-            await* createGrant(
-                subject,
+            let ?entropy = await* freshGrantEntropy() else {
+                return #err(#unavailable);
+            };
+
+            // Ownership may change while entropy is acquired. Recompute the
+            // current unique owner and validate immediately before persistence.
+            if (not validIssueRequest(providerScope, input)) {
+                return #err(#not_authorized);
+            };
+            let ?currentSubject = scopeSubject(providerScope) else {
+                return #err(#not_authorized);
+            };
+            if (not subjectOwnsScope(currentSubject, providerScope)) {
+                return #err(#not_authorized);
+            };
+
+            createGrantFromEntropy(
+                currentSubject,
                 providerScope,
                 providerScope,
                 input.resource,
@@ -267,7 +307,20 @@ module {
                 input.expires_at,
                 null,
                 input.max_redemptions,
+                entropy.grant,
+                entropy.secret,
             );
+        };
+
+        func validIssueRequest(
+            providerScope : Types.AppScopeRef,
+            input : Types.IssueInput,
+        ) : Bool {
+            CapabilityScope.valid(providerScope) and
+            scopeActive(providerScope) and
+            validResource(input.resource) and
+            validRights(input.rights) and
+            not expiredAtCreation(input.expires_at);
         };
 
         func listFromScope(
@@ -377,10 +430,8 @@ module {
                 return #err(#not_authorized);
             };
 
-            let key =
-                resourceKey(providerScope, input.resource);
-            let current =
-                resourceEpoch(providerScope, input.resource);
+            let key = resourceKey(providerScope, input.resource);
+            let current = resourceEpoch(providerScope, input.resource);
 
             if (current == 18_446_744_073_709_551_615) {
                 return #err(#unavailable);
@@ -410,16 +461,19 @@ module {
             dispatch : Types.ProviderDispatch,
         ) : () {
             if (
-                CapabilityScope.valid(providerScope) and
-                scopeActive(providerScope)
-            ) {
-                Map.add(
-                    providerDispatch,
-                    Text.compare,
-                    CapabilityScope.key(providerScope),
-                    dispatch,
-                );
-            };
+                not CapabilityScope.valid(providerScope) or
+                not scopeActive(providerScope)
+            ) return;
+
+            let ?subject = scopeSubject(providerScope) else return;
+            if (not subjectOwnsScope(subject, providerScope)) return;
+
+            Map.add(
+                providerDispatch,
+                Text.compare,
+                CapabilityScope.key(providerScope),
+                dispatch,
+            );
         };
 
         func callFromScope(
@@ -448,6 +502,7 @@ module {
                 resource = lease.resource;
                 rights = lease.rights;
             };
+
             let response = await* dispatch({
                 authorization = context;
                 operation = input.operation;
@@ -460,47 +515,115 @@ module {
             consumerScope : Types.AppScopeRef,
             input : Types.DelegateInput,
         ) : async* Types.IssueResult {
-            let ?lease = validLeaseForScope(input.lease_id, consumerScope) else {
+            let ?lease = validDelegationLease(consumerScope, input) else {
                 return #err(#denied);
             };
-            if (not hasRight(lease.rights, #reshare)) return #err(#denied);
-            let ?parentStored = Map.get(grantsMem.grants, Text.compare, lease.grant_id) else {
-                return #err(#denied);
-            };
-            let parent = parentStored.grant;
-            if (
-                not validRights(input.rights) or
-                not rightsSubset(input.rights, parent.rights) or
-                expiredAtCreation(input.expires_at) or
-                not childExpiryAllowed(input.expires_at, parent.expires_at)
-            ) return #err(#denied);
 
-            await* createGrant(
-                lease.subject,
+            let ?entropy = await* freshGrantEntropy() else {
+                return #err(#unavailable);
+            };
+
+            // The lease, parent, issuer ownership, ancestry, rights and expiry
+            // are all revalidated after both randomness awaits. No await occurs
+            // between this check and child persistence.
+            let ?currentLease = validDelegationLease(consumerScope, input) else {
+                return #err(#denied);
+            };
+            let ?currentParentStored = Map.get(
+                grantsMem.grants,
+                Text.compare,
+                currentLease.grant_id,
+            ) else return #err(#denied);
+            let currentParent = currentParentStored.grant;
+
+            createGrantFromEntropy(
+                currentLease.subject,
                 consumerScope,
-                parent.provider_scope,
-                parent.resource,
+                currentParent.provider_scope,
+                currentParent.resource,
                 input.audience,
                 input.consumer_element,
                 normalizeRights(input.rights),
                 input.expires_at,
-                ?parent.grant_id,
+                ?currentParent.grant_id,
                 input.max_redemptions,
+                entropy.grant,
+                entropy.secret,
             );
         };
 
-        func releaseFromScope(consumerScope : Types.AppScopeRef, leaseId : Text) : () {
+        func validDelegationLease(
+            consumerScope : Types.AppScopeRef,
+            input : Types.DelegateInput,
+        ) : ?Types.AuthorizationLease {
+            let ?lease = validLeaseForScope(input.lease_id, consumerScope) else {
+                return null;
+            };
+            if (not hasRight(lease.rights, #reshare)) return null;
+
+            let ?parentStored = Map.get(
+                grantsMem.grants,
+                Text.compare,
+                lease.grant_id,
+            ) else return null;
+            let parent = parentStored.grant;
+
+            if (
+                not grantUsable(parent) or
+                not validRights(input.rights) or
+                not rightsSubset(input.rights, parent.rights) or
+                expiredAtCreation(input.expires_at) or
+                not childExpiryAllowed(input.expires_at, parent.expires_at) or
+                not resourceEqual(lease.resource, parent.resource) or
+                not CapabilityScope.equal(
+                    lease.provider_scope,
+                    parent.provider_scope,
+                )
+            ) return null;
+
+            ?lease;
+        };
+
+        func releaseFromScope(
+            consumerScope : Types.AppScopeRef,
+            leaseId : Text,
+        ) : () {
             switch (Map.get(leases, Text.compare, leaseId)) {
                 case (?lease) {
                     if (CapabilityScope.equal(lease.consumer_scope, consumerScope)) {
-                        Map.remove(leases, Text.compare, leaseId);
+                        ignore Map.remove(leases, Text.compare, leaseId);
+                        appendAudit(
+                            "release",
+                            ?lease.grant_id,
+                            ?lease.subject,
+                            ?lease.consumer_scope,
+                            ?lease.provider_scope,
+                            ?lease.resource,
+                        );
                     };
                 };
                 case null {};
             };
         };
 
-        func createGrant(
+        func freshGrantEntropy() : async* ?{
+            grant : Blob;
+            secret : Blob;
+        } {
+            let grantRandom = await* freshRandom();
+            let secretRandom = await* freshRandom();
+            if (grantRandom.size() < 32 or secretRandom.size() < 32) {
+                return null;
+            };
+            ?{
+                grant = grantRandom;
+                secret = secretRandom;
+            };
+        };
+
+        // Synchronous by design. Every caller performs its final authorization
+        // revalidation after entropy acquisition before entering this function.
+        func createGrantFromEntropy(
             issuerSubject : Types.SubjectRef,
             issuerScope : Types.AppScopeRef,
             providerScope : Types.AppScopeRef,
@@ -511,17 +634,16 @@ module {
             expiresAt : ?Nat64,
             parentGrantId : ?Text,
             maxRedemptions : ?Nat,
-        ) : async* Types.IssueResult {
-            let grantRandom = await* freshRandom();
-            let secretRandom = await* freshRandom();
-            if (grantRandom.size() < 32 or secretRandom.size() < 32) {
-                return #err(#unavailable);
-            };
+            grantRandom : Blob,
+            secretRandom : Blob,
+        ) : Types.IssueResult {
             let grantId = hex(grantRandom);
             let secret = hex(secretRandom);
+
             if (Map.get(grantsMem.grants, Text.compare, grantId) != null) {
                 return #err(#unavailable);
             };
+
             let createdAt = now();
             let grant : Types.AuthorizationGrant = {
                 grant_id = grantId;
@@ -540,10 +662,12 @@ module {
                 max_redemptions = maxRedemptions;
                 redemption_count = 0;
             };
+
             let stored : Types.StoredGrant = {
                 grant;
                 secret_hash = secretHash(grantId, secret);
             };
+
             Map.add(grantsMem.grants, Text.compare, grantId, stored);
             appendAudit(
                 if (parentGrantId == null) "issue" else "delegate",
@@ -553,6 +677,7 @@ module {
                 ?providerScope,
                 ?resource,
             );
+
             #ok({
                 grant;
                 token = TOKEN_PREFIX # "_" # grantId # "_" # secret;
@@ -568,13 +693,16 @@ module {
                 lease.expires_at <= now() or
                 not CapabilityScope.equal(lease.consumer_scope, consumerScope) or
                 not scopeActive(consumerScope) or
-                not scopeActive(lease.provider_scope) or
                 not subjectOwnsScope(lease.subject, consumerScope)
             ) return null;
-            let ?stored = Map.get(grantsMem.grants, Text.compare, lease.grant_id) else {
-                return null;
-            };
+
+            let ?stored = Map.get(
+                grantsMem.grants,
+                Text.compare,
+                lease.grant_id,
+            ) else return null;
             if (not grantUsable(stored.grant)) return null;
+
             ?lease;
         };
 
@@ -583,36 +711,99 @@ module {
                 grant.revoked_at != null or
                 isExpired(grant.expires_at) or
                 not grantEpochCurrent(grant) or
-                not scopeActive(grant.provider_scope)
+                not scopeActive(grant.provider_scope) or
+                not scopeActive(grant.issuer_scope) or
+                not subjectOwnsScope(grant.issuer_subject, grant.issuer_scope)
             ) return false;
 
-            var current = grant;
-            var depth : Nat = 0;
-            label ancestry loop {
-                switch (current.parent_grant_id) {
-                    case null return true;
-                    case (?parentId) {
-                        if (depth >= MAX_ANCESTRY_DEPTH) return false;
-                        let ?parentStored = Map.get(
-                            grantsMem.grants,
-                            Text.compare,
-                            parentId,
-                        ) else return false;
-                        let parent = parentStored.grant;
-                        if (
-                            parent.revoked_at != null or
-                            isExpired(parent.expires_at) or
-                            not grantEpochCurrent(parent) or
-                            not resourceEqual(parent.resource, grant.resource) or
-                            not CapabilityScope.equal(parent.provider_scope, grant.provider_scope)
-                        ) return false;
-                        current := parent;
-                        depth += 1;
-                        continue ancestry;
-                    };
+            ancestryUsable(grant, grant, 0);
+        };
+
+        func ancestryUsable(
+            original : Types.AuthorizationGrant,
+            current : Types.AuthorizationGrant,
+            depth : Nat,
+        ) : Bool {
+            switch (current.parent_grant_id) {
+                case null true;
+                case (?parentId) {
+                    if (depth >= MAX_ANCESTRY_DEPTH) return false;
+                    let ?parentStored = Map.get(
+                        grantsMem.grants,
+                        Text.compare,
+                        parentId,
+                    ) else return false;
+                    let parent = parentStored.grant;
+
+                    if (
+                        parent.revoked_at != null or
+                        isExpired(parent.expires_at) or
+                        not grantEpochCurrent(parent) or
+                        not scopeActive(parent.provider_scope) or
+                        not scopeActive(parent.issuer_scope) or
+                        not subjectOwnsScope(
+                            parent.issuer_subject,
+                            parent.issuer_scope,
+                        ) or
+                        not resourceEqual(parent.resource, original.resource) or
+                        not CapabilityScope.equal(
+                            parent.provider_scope,
+                            original.provider_scope,
+                        )
+                    ) return false;
+
+                    ancestryUsable(original, parent, depth + 1);
                 };
             };
-            false;
+        };
+
+        func effectivelyRevoked(grant : Types.AuthorizationGrant) : Bool {
+            if (
+                grant.revoked_at != null or
+                not grantEpochCurrent(grant) or
+                not scopeActive(grant.provider_scope) or
+                not scopeActive(grant.issuer_scope) or
+                not subjectOwnsScope(grant.issuer_subject, grant.issuer_scope)
+            ) return true;
+
+            ancestryEffectivelyRevoked(grant, grant, 0);
+        };
+
+        func ancestryEffectivelyRevoked(
+            original : Types.AuthorizationGrant,
+            current : Types.AuthorizationGrant,
+            depth : Nat,
+        ) : Bool {
+            switch (current.parent_grant_id) {
+                case null false;
+                case (?parentId) {
+                    if (depth >= MAX_ANCESTRY_DEPTH) return true;
+                    let ?parentStored = Map.get(
+                        grantsMem.grants,
+                        Text.compare,
+                        parentId,
+                    ) else return true;
+                    let parent = parentStored.grant;
+
+                    if (
+                        parent.revoked_at != null or
+                        not grantEpochCurrent(parent) or
+                        not scopeActive(parent.provider_scope) or
+                        not scopeActive(parent.issuer_scope) or
+                        not subjectOwnsScope(
+                            parent.issuer_subject,
+                            parent.issuer_scope,
+                        ) or
+                        not resourceEqual(parent.resource, original.resource) or
+                        not CapabilityScope.equal(
+                            parent.provider_scope,
+                            original.provider_scope,
+                        )
+                    ) return true;
+
+                    ancestryEffectivelyRevoked(original, parent, depth + 1);
+                };
+            };
         };
 
         func grantEpochCurrent(grant : Types.AuthorizationGrant) : Bool {
@@ -747,7 +938,10 @@ module {
             false;
         };
 
-        func resourceEqual(left : Types.ResourceRef, right : Types.ResourceRef) : Bool {
+        func resourceEqual(
+            left : Types.ResourceRef,
+            right : Types.ResourceRef,
+        ) : Bool {
             left.namespace == right.namespace and
             left.resource_id == right.resource_id and
             left.resource_type == right.resource_type;
@@ -778,17 +972,20 @@ module {
             );
         };
 
-        func secretMatches(grantId : Text, secret : Text, expected : Blob) : Bool {
+        func secretMatches(
+            grantId : Text,
+            secret : Text,
+            expected : Blob,
+        ) : Bool {
             Blob.equal(secretHash(grantId, secret), expected);
         };
 
         func hex(value : Blob) : Text {
             var result = "";
             for (byte in value.vals()) {
-                let n = byte / 16;
-                let m = byte % 16;
-                result #= LOWER_HEX_DIGITS[Nat64.toNat(Nat64.fromNat(Nat8.toNat(n)))] #
-                    LOWER_HEX_DIGITS[Nat64.toNat(Nat64.fromNat(Nat8.toNat(m)))];
+                let natural = Nat8.toNat(byte);
+                result #= LOWER_HEX_DIGITS[natural / 16] #
+                    LOWER_HEX_DIGITS[natural % 16];
             };
             result;
         };
