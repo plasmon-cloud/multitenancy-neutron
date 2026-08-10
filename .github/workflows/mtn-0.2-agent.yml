@@ -11,6 +11,8 @@ on:
       - scripts/apply-mtn-0.2-compile-fixes.py
       - scripts/apply-mtn-0.2-upgrade-test.py
       - scripts/apply-mtn-0.2-public-surface-fix.py
+      - scripts/apply-mtn-0.2-security-hardening.py
+      - scripts/apply-mtn-0.2-security-tests.py
       - scripts/verify-mtn-0.2-upgrade.py
       - .github/workflows/mtn-0.2-agent.yml
       - apps/kernel/backend/authorization/**
@@ -49,6 +51,8 @@ jobs:
           python3 scripts/apply-mtn-0.2-compile-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-upgrade-test.py 2>&1 | tee -a /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-public-surface-fix.py 2>&1 | tee -a /tmp/mtn-apply.log
+          python3 scripts/apply-mtn-0.2-security-hardening.py 2>&1 | tee -a /tmp/mtn-apply.log
+          python3 scripts/apply-mtn-0.2-security-tests.py 2>&1 | tee -a /tmp/mtn-apply.log
           git diff --check 2>&1 | tee -a /tmp/mtn-apply.log
 
       - name: Install Nix
