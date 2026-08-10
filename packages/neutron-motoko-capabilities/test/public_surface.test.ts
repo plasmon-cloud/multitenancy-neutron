@@ -9,6 +9,92 @@ test("reviewed capability package exports leaf types only", async () => {
   expect(source).not.toMatch(/\b(?:AppScope|AppInstance|Adapter)\b/);
   expect(source).not.toMatch(/\b(?:actor|class|public\s+func)\b/);
   expect(source).not.toMatch(/\b(?:cyclesAdd|management_canister|raw_rand)\b/);
+
+  const authorizationTypes = [
+    "AuthorizationSubjectV1",
+    "AuthorizationScopeV1",
+    "AuthorizationResourceV1",
+    "AuthorizationAudienceV1",
+    "AuthorizationRightV1",
+    "AuthorizationGrantV1",
+    "AuthorizationIssueInputV1",
+    "AuthorizationIssueOutputV1",
+    "AuthorizationIssueResultV1",
+    "AuthorizationMutationResultV1",
+    "AuthorizationLeaseV1",
+    "AuthorizationContextV1",
+    "AuthorizationCallInputV1",
+    "AuthorizationCallRequestV1",
+    "AuthorizationCallResultV1",
+    "AuthorizationDelegateInputV1",
+    "AuthorizationV1",
+  ];
+  for (const typeName of authorizationTypes) {
+    expect(source).toContain(`public type ${typeName}`);
+  }
+
+  const authorizationSurface = source.slice(
+    source.indexOf("public type AuthorizationSubjectV1"),
+    source.indexOf("public type DeferredTimerPhaseV1"),
+  );
+  expect(authorizationSurface).not.toMatch(
+    /\b(?:secret_hash|StoredGrant|memory_authorization|StableMemory|Region|management_canister|raw_rand)\b/,
+  );
+  expect(authorizationSurface).not.toContain("authorization_capability");
+  expect(authorizationSurface.match(/\btoken\s*:/g)).toHaveLength(1);
+
+  expect(
+    authorizationSurface.match(
+      /public type AuthorizationScopeV1 = \{([\s\S]*?)\n    \};/,
+    )?.[1],
+  ).toBe("\n        app_id : Text;\n        installation_uid : Nat64;");
+
+  const issueInput = authorizationSurface.match(
+    /public type AuthorizationIssueInputV1 = \{([\s\S]*?)\n    \};/,
+  )?.[1] ?? "";
+  expect(issueInput).toContain("resource : AuthorizationResourceV1");
+  expect(issueInput).not.toMatch(/\b(?:provider_scope|issuer_scope|consumer_scope)\b/);
+
+  const delegateInput = authorizationSurface.match(
+    /public type AuthorizationDelegateInputV1 = \{([\s\S]*?)\n    \};/,
+  )?.[1] ?? "";
+  expect(delegateInput).toContain("lease_id : Text");
+  expect(delegateInput).not.toMatch(
+    /\b(?:provider_scope|issuer_scope|consumer_scope|resource)\b/,
+  );
+
+  const callInput = authorizationSurface.match(
+    /public type AuthorizationCallInputV1 = \{([\s\S]*?)\n    \};/,
+  )?.[1] ?? "";
+  const callInputFields = [
+    ...callInput.matchAll(/^\s*(\w+)\s*:/gm),
+  ].map((match) => match[1]);
+  expect(callInputFields).toEqual([
+    "lease_id",
+    "requested_right",
+    "operation",
+    "payload",
+  ]);
+  expect(callInput).not.toMatch(/\b(?:provider_scope|resource|consumer_scope)\b/);
+
+  const authorizationHandle = authorizationSurface.match(
+    /public type AuthorizationV1 = \{([\s\S]*?)\n    \};/,
+  )?.[1] ?? "";
+  const authorizationHandleFields = [
+    ...authorizationHandle.matchAll(/^\s*(\w+)\s*:/gm),
+  ].map((match) => match[1]);
+  expect(authorizationHandleFields).toEqual([
+    "issue",
+    "list",
+    "revoke",
+    "rotate_resource",
+    "register_provider",
+    "call",
+    "delegate",
+    "release",
+  ]);
+  expect(authorizationHandle).not.toMatch(/\b(?:scope|factory|kernel)\s*:/i);
+
   expect(source).toContain("public type DeferredTimersV1");
   expect(source).toContain("callback : () -> ();");
   expect(source).toContain("public type BackendCallsV1");
@@ -237,8 +323,7 @@ test("reviewed capability package exports leaf types only", async () => {
 
   const stageGeometryFields = [
     ...(
-      source.match(/public type StageGeometry = \{([\s\S]*?)\n    \};/)?.[1] ??
-      ""
+      source.match(/public type StageGeometry = \{([\s\S]*?)\n    \};/)?.[1] ?? ""
     ).matchAll(/^\s*(\w+)\s*:/gm),
   ].map((match) => match[1]);
   expect(stageGeometryFields).toEqual([
