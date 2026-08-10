@@ -29,9 +29,9 @@ jobs:
 
       - name: Apply MTN 0.2 integration patch
         run: |
-          set -euxo pipefail
-          python3 scripts/apply-mtn-0.2.py
-          git diff --check
+          set -o pipefail
+          python3 scripts/apply-mtn-0.2.py 2>&1 | tee /tmp/mtn-apply.log
+          git diff --check 2>&1 | tee -a /tmp/mtn-apply.log
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -40,40 +40,45 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -o pipefail
           nix develop --command bash -lc '
             set -euxo pipefail
             npm ci
-          '
+          ' 2>&1 | tee /tmp/mtn-deps.log
 
       - name: Focused authorization Motoko test
         run: |
+          set -o pipefail
           nix develop --command bash -lc '
             set -euxo pipefail
             cd apps/kernel
             MOTOKO_TEST=authorization_service_test.mo bun test/motoko/run.ts
-          '
+          ' 2>&1 | tee /tmp/mtn-focused.log
 
       - name: Kernel package
         run: |
+          set -o pipefail
           nix develop --command bash -lc '
             set -euxo pipefail
             npm --workspace neutron-kernel run package
-          '
+          ' 2>&1 | tee /tmp/mtn-package.log
 
       - name: Existing allocator regression
         run: |
+          set -o pipefail
           nix develop --command bash -lc '
             set -euxo pipefail
             cd apps/kernel
             MOTOKO_TEST=app_instance_allocation_test.mo bun test/motoko/run.ts
-          '
+          ' 2>&1 | tee /tmp/mtn-allocator.log
 
       - name: Core tests
         run: |
+          set -o pipefail
           nix develop --command bash -lc '
             set -euxo pipefail
             npm test
-          '
+          ' 2>&1 | tee /tmp/mtn-core.log
 
       - name: Commit implementation
         if: success()
@@ -87,4 +92,26 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add apps/kernel packages/neutron-compiler packages/neutron-tools packages/neutron-motoko-capabilities .github/workflows/kernel-ci.yml
           git commit -m "Implement MTN 0.2 resource capabilities"
+          git push origin HEAD:version-0.2.0
+
+      - name: Publish failure diagnostics
+        if: failure()
+        run: |
+          set -eu
+          mkdir -p scripts
+          {
+            echo "MTN 0.2 agent gate failed."
+            echo
+            for file in /tmp/mtn-apply.log /tmp/mtn-deps.log /tmp/mtn-focused.log /tmp/mtn-package.log /tmp/mtn-allocator.log /tmp/mtn-core.log; do
+              if [ -f "$file" ]; then
+                echo "===== $file ====="
+                tail -n 240 "$file"
+                echo
+              fi
+            done
+          } > scripts/mtn-agent-last.log
+          git config user.name "plasmon-cloud automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add scripts/mtn-agent-last.log
+          git commit -m "Record MTN 0.2 agent gate failure" || exit 0
           git push origin HEAD:version-0.2.0
