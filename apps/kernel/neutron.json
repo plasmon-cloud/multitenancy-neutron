@@ -12,6 +12,9 @@
     "memory_app_instances",
     "memory_app_instance_lifecycle",
     "memory_app_catalog",
+    "memory_authorization_grants",
+    "memory_authorization_resource_epochs",
+    "memory_authorization_audit",
     "deployment_id",
     "active_app_instance_inventory",
     "canister_principal"
@@ -147,6 +150,24 @@
     "kernel_tenant_apps": {
       "type": "query",
       "async": false
+    },
+    "kernel_authorization_capabilities": {
+      "type": "query",
+      "async": false,
+      "allow": "unauthorized"
+    },
+    "kernel_authorization_inspect": {
+      "type": "query",
+      "async": false,
+      "allow": "unauthorized"
+    },
+    "kernel_authorization_redeem": {
+      "type": "update",
+      "async": "async*",
+      "arg": [
+        "caller"
+      ],
+      "allow": "unauthorized"
     },
     "kernel_authorized_recover": {
       "type": "update",
@@ -539,6 +560,33 @@
       "schemas": {
         "1": {
           "src": "memory/app_instance_lifecycle/v1.mo"
+        }
+      },
+      "migrations": []
+    },
+    "authorization_grants": {
+      "version": 1,
+      "schemas": {
+        "1": {
+          "src": "memory/authorization_grants/v1.mo"
+        }
+      },
+      "migrations": []
+    },
+    "authorization_resource_epochs": {
+      "version": 1,
+      "schemas": {
+        "1": {
+          "src": "memory/authorization_resource_epochs/v1.mo"
+        }
+      },
+      "migrations": []
+    },
+    "authorization_audit": {
+      "version": 1,
+      "schemas": {
+        "1": {
+          "src": "memory/authorization_audit/v1.mo"
         }
       },
       "migrations": []
