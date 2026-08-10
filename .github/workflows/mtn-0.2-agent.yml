@@ -18,6 +18,7 @@ on:
       - apps/kernel/backend/memory/authorization_audit/**
       - apps/kernel/test/motoko/authorization_service_test.mo
       - apps/kernel/test/motoko/authorization_upgrade_persistence_test.mo
+      - packages/neutron-compiler/test/authorization.test.ts
   workflow_dispatch:
 
 concurrency:
