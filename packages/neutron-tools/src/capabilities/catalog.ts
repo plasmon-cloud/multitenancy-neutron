@@ -278,6 +278,10 @@ export const BACKEND_CAPABILITY_INTERFACES = Object.freeze({
     api: CAPABILITY_API_VERSION,
     declaration: null,
   }),
+  authorization: Object.freeze({
+    api: CAPABILITY_API_VERSION,
+    declaration: null,
+  }),
   backend_calls: Object.freeze({
     api: CAPABILITY_API_VERSION,
     declaration: "backend_calls",

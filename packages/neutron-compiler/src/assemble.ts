@@ -1079,6 +1079,9 @@ function createBackendCapabilitiesEnvironmentGroup(
     if (id === "deferred_timers") {
       return `        deferred_timers = ${KERNEL_INIT}.deferred_timers_capability(${appScopeName(conf.id)});`;
     }
+    if (id === "authorization") {
+      return `        authorization = ${KERNEL_INIT}.authorization_capability(${appScopeName(conf.id)});`;
+    }
     if (id === "backend_calls") {
       return `        backend_calls = ${KERNEL_INIT}.backend_calls_capability(${appScopeName(conf.id)}, ${ACTOR_SELF});`;
     }

@@ -24,6 +24,8 @@ const compiledTests = [
   "painless_test.mo",
 ];
 const interpretedTests = [
+  "authorization_service_test.mo",
+  "authorization_upgrade_persistence_test.mo",
   "authenticated_forest_lifecycle_test.mo",
   "backend_calls_test.mo",
   "chain_key_signing_service_test.mo",

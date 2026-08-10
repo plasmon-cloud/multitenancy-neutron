@@ -102,7 +102,7 @@ func freshRandom() : async* Blob {
     }));
 };
 
-func newService() {
+func newService() : Service.Service {
     Service.Service(
         grants,
         epochs,

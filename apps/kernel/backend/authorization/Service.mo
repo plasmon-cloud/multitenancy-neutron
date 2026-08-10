@@ -1,12 +1,13 @@
 import Array "mo:core/Array";
 import Blob "mo:core/Blob";
 import Iter "mo:core/Iter";
+import List "mo:core/List";
 import Map "mo:core/Map";
 import Nat64 "mo:core/Nat64";
+import Nat8 "mo:core/Nat8";
 import Principal "mo:core/Principal";
 import Text "mo:core/Text";
 import Sha256 "mo:sha2/Sha256";
-import IC "../aaa_interface";
 import CapabilityScope "../capabilities/Scope";
 import GrantsMemory "../memory/authorization_grants/v1";
 import EpochsMemory "../memory/authorization_resource_epochs/v1";
@@ -14,7 +15,9 @@ import AuditMemory "../memory/authorization_audit/v1";
 import Types "Types";
 
 module {
-    let ANONYMOUS = Principal.fromText("2vxsx-fae");
+    func isAnonymous(principal : Principal) : Bool {
+        principal == Principal.fromText("2vxsx-fae");
+    };
     let LEASE_LIFETIME_NS : Nat64 = 300_000_000_000;
     let MAX_ANCESTRY_DEPTH : Nat = 64;
     let TOKEN_PREFIX = "mtn2";
@@ -30,7 +33,9 @@ module {
         auditMem : AuditMemory.Mem,
         scopeActive : Types.AppScopeRef -> Bool,
         subjectOwnsScope : (Types.SubjectRef, Types.AppScopeRef) -> Bool,
+        scopeSubject : Types.AppScopeRef -> ?Types.SubjectRef,
         scopeElement : Types.AppScopeRef -> ?Text,
+        freshRandom : () -> async* Blob,
         now : () -> Nat64,
     ) {
         // Leases and provider callbacks are deliberately transient. Restart or
@@ -56,88 +61,49 @@ module {
             };
         };
 
-        public func issue(
-            input : Types.IssueInput,
-            caller : Principal,
-        ) : async* Types.IssueResult {
-            if (caller == ANONYMOUS) return #err(#unauthenticated);
-            let subject : Types.SubjectRef = #principal(caller);
-            if (
-                not validResource(input.resource) or
-                not validRights(input.rights) or
-                not CapabilityScope.valid(input.provider_scope) or
-                not scopeActive(input.provider_scope) or
-                not subjectOwnsScope(subject, input.provider_scope) or
-                expiredAtCreation(input.expires_at)
-            ) return #err(#not_authorized);
-
-            await* createGrant(
-                subject,
-                input.provider_scope,
-                input.provider_scope,
-                input.resource,
-                input.audience,
-                input.consumer_element,
-                normalizeRights(input.rights),
-                input.expires_at,
-                null,
-                input.max_redemptions,
-            );
-        };
-
-        public func list(
-            input : Types.ListInput,
-            caller : Principal,
-        ) : [Types.AuthorizationGrant] {
-            if (caller == ANONYMOUS) return [];
-            let subject : Types.SubjectRef = #principal(caller);
-            if (
-                not CapabilityScope.valid(input.issuer_scope) or
-                not subjectOwnsScope(subject, input.issuer_scope)
-            ) return [];
-
-            var result : [Types.AuthorizationGrant] = [];
-            for ((_, stored) in Map.entries(grantsMem.grants)) {
-                if (CapabilityScope.equal(stored.grant.issuer_scope, input.issuer_scope)) {
-                    result := Array.concat(result, [stored.grant]);
-                };
-            };
-            result;
-        };
-
-        // Safe pre-authentication metadata inspection. It requires only the
-        // non-secret grant id and never exposes provider scope, tenant data,
-        // secret hash, or provider storage paths.
+        // Safe pre-authentication metadata inspection. Exact resource identity,
+        // provider/issuer scope, bearer material, and storage paths are absent.
         public func inspect(input : Types.InspectInput) : ?Types.GrantInspection {
             let ?stored = Map.get(grantsMem.grants, Text.compare, input.grant_id) else {
                 return null;
             };
             let grant = stored.grant;
             ?{
-                grant_id = grant.grant_id;
-                resource = grant.resource;
+                namespace = grant.resource.namespace;
+                resource_type = grant.resource.resource_type;
                 consumer_element = grant.consumer_element;
                 rights = grant.rights;
                 expires_at = grant.expires_at;
-                revoked = grant.revoked_at != null or not grantEpochCurrent(grant);
+                revoked =
+                    grant.revoked_at != null or
+                    not grantEpochCurrent(grant);
             };
         };
 
+        // Redemption is the one subject-bound public operation accepting an
+        // explicit consumer AppScope. Ownership and Element are revalidated.
         public func redeem(
             input : Types.RedeemInput,
             caller : Principal,
         ) : async* Types.RedeemResult {
-            if (caller == ANONYMOUS) return #err(#unauthenticated);
+            if (isAnonymous(caller)) return #err(#unauthenticated);
+
             let ?token = parseToken(input.token) else return #err(#denied);
-            let ?stored = Map.get(grantsMem.grants, Text.compare, token.grant_id) else {
-                return #err(#denied);
-            };
-            if (not secretMatches(token.grant_id, token.secret, stored.secret_hash)) {
-                return #err(#denied);
-            };
+            let ?stored = Map.get(
+                grantsMem.grants,
+                Text.compare,
+                token.grant_id,
+            ) else return #err(#denied);
+
+            if (not secretMatches(
+                token.grant_id,
+                token.secret,
+                stored.secret_hash,
+            )) return #err(#denied);
 
             let subject : Types.SubjectRef = #principal(caller);
             let grant = stored.grant;
+
             if (
                 not grantUsable(grant) or
                 not audienceAllows(grant.audience, subject) or
@@ -145,14 +111,27 @@ module {
                 not scopeActive(input.consumer_scope) or
                 not subjectOwnsScope(subject, input.consumer_scope) or
                 not scopeActive(grant.provider_scope) or
-                not consumerElementAllows(grant.consumer_element, input.consumer_scope) or
+                not consumerElementAllows(
+                    grant.consumer_element,
+                    input.consumer_scope,
+                ) or
                 not redemptionAvailable(grant)
             ) return #err(#denied);
 
-            let leaseRandom = await IC.management.raw_rand();
+            let leaseRandom = await* freshRandom();
             if (leaseRandom.size() < 32) return #err(#unavailable);
+
             let leaseId = hex(leaseRandom);
             let issuedAt = now();
+            let nominalLeaseExpiry = issuedAt + LEASE_LIFETIME_NS;
+            let effectiveLeaseExpiry = switch (grant.expires_at) {
+                case (?grantExpiry) {
+                    if (grantExpiry < nominalLeaseExpiry) grantExpiry
+                    else nominalLeaseExpiry;
+                };
+                case null nominalLeaseExpiry;
+            };
+
             let lease : Types.AuthorizationLease = {
                 lease_id = leaseId;
                 grant_id = grant.grant_id;
@@ -162,20 +141,26 @@ module {
                 resource = grant.resource;
                 rights = grant.rights;
                 issued_at = issuedAt;
-                expires_at = issuedAt + LEASE_LIFETIME_NS;
+                expires_at = effectiveLeaseExpiry;
             };
 
             let updatedGrant = copyGrantWithRedemptionCount(
                 grant,
                 grant.redemption_count + 1,
             );
+
             Map.add(
                 grantsMem.grants,
                 Text.compare,
                 grant.grant_id,
-                { grant = updatedGrant; secret_hash = stored.secret_hash },
+                {
+                    grant = updatedGrant;
+                    secret_hash = stored.secret_hash;
+                },
             );
+
             Map.add(leases, Text.compare, leaseId, lease);
+
             appendAudit(
                 "redeem",
                 ?grant.grant_id,
@@ -184,102 +169,58 @@ module {
                 ?grant.provider_scope,
                 ?grant.resource,
             );
+
             #ok(lease);
         };
 
-        public func revoke(
-            input : Types.RevokeInput,
-            caller : Principal,
-        ) : Types.MutationResult {
-            if (caller == ANONYMOUS) return #err(#unauthenticated);
-            let ?stored = Map.get(grantsMem.grants, Text.compare, input.grant_id) else {
-                return #err(#denied);
-            };
-            let subject : Types.SubjectRef = #principal(caller);
-            if (
-                not subjectOwnsScope(subject, stored.grant.issuer_scope) or
-                stored.grant.issuer_subject != subject
-            ) return #err(#not_authorized);
-
-            if (stored.grant.revoked_at == null) {
-                let revoked = copyGrantWithRevokedAt(stored.grant, ?now());
-                Map.add(
-                    grantsMem.grants,
-                    Text.compare,
-                    input.grant_id,
-                    { grant = revoked; secret_hash = stored.secret_hash },
-                );
-                appendAudit(
-                    "revoke",
-                    ?input.grant_id,
-                    ?subject,
-                    null,
-                    ?stored.grant.provider_scope,
-                    ?stored.grant.resource,
-                );
-            };
-            #ok;
-        };
-
-        public func rotateResource(
-            input : Types.RotateResourceInput,
-            caller : Principal,
-        ) : Types.MutationResult {
-            if (caller == ANONYMOUS) return #err(#unauthenticated);
-            let subject : Types.SubjectRef = #principal(caller);
-            if (
-                not validResource(input.resource) or
-                not CapabilityScope.valid(input.provider_scope) or
-                not scopeActive(input.provider_scope) or
-                not subjectOwnsScope(subject, input.provider_scope)
-            ) return #err(#not_authorized);
-
-            let key = resourceKey(input.provider_scope, input.resource);
-            let current = resourceEpoch(input.provider_scope, input.resource);
-            if (current == 18_446_744_073_709_551_615) return #err(#unavailable);
-            Map.add(epochsMem.epochs, Text.compare, key, current + 1);
-            appendAudit(
-                "rotate_resource",
-                null,
-                ?subject,
-                null,
-                ?input.provider_scope,
-                ?input.resource,
-            );
-            #ok;
-        };
-
-        public func consumerCapability(
-            consumerScope : Types.AppScopeRef,
+        // One compiler-delivered capability is permanently bound to one exact
+        // AppScope. None of these methods accepts a sibling scope selector.
+        public func authorizationCapability(
+            boundScope : Types.AppScopeRef,
         ) : Types.AuthorizationCapabilityV1 {
             {
-                call = func(input : Types.AuthorizedCallInput) : async* Types.AuthorizedCallResult {
-                    await* callFromScope(consumerScope, input);
+                issue = func(
+                    input : Types.IssueInput
+                ) : async* Types.IssueResult {
+                    await* issueFromScope(boundScope, input);
                 };
-                delegate = func(input : Types.DelegateInput) : async* Types.IssueResult {
-                    await* delegateFromScope(consumerScope, input);
-                };
-                release = func(input : Types.ReleaseInput) : () {
-                    releaseFromScope(consumerScope, input.lease_id);
-                };
-            };
-        };
 
-        public func providerCapability(
-            providerScope : Types.AppScopeRef,
-        ) : Types.AuthorizationProviderV1 {
-            {
-                register = func(dispatch : Types.ProviderDispatch) : () {
-                    // Registration is transient and compiler-bound to the exact
-                    // provider scope. A callback cannot register for another scope.
-                    if (scopeActive(providerScope)) {
-                        Map.add(
-                            providerDispatch,
-                            Text.compare,
-                            CapabilityScope.key(providerScope),
-                            dispatch,
-                        );
-                    };
+                list = func() : [Types.AuthorizationGrant] {
+                    listFromScope(boundScope);
+                };
+
+                revoke = func(
+                    input : Types.RevokeInput
+                ) : Types.MutationResult {
+                    revokeFromScope(boundScope, input);
+                };
+
+                rotate_resource = func(
+                    input : Types.RotateResourceInput
+                ) : Types.MutationResult {
+                    rotateResourceFromScope(boundScope, input);
+                };
+
+                register_provider = func(
+                    dispatch : Types.ProviderDispatch
+                ) : () {
+                    registerProviderFromScope(boundScope, dispatch);
+                };
+
+                call = func(
+                    input : Types.AuthorizedCallInput
+                ) : async* Types.AuthorizedCallResult {
+                    await* callFromScope(boundScope, input);
+                };
+
+                delegate = func(
+                    input : Types.DelegateInput
+                ) : async* Types.IssueResult {
+                    await* delegateFromScope(boundScope, input);
+                };
+
+                release = func(input : Types.ReleaseInput) : () {
+                    releaseFromScope(boundScope, input.lease_id);
                 };
             };
         };
@@ -293,6 +234,192 @@ module {
             resource : Types.ResourceRef,
         ) : Nat64 {
             resourceEpoch(providerScope, resource);
+        };
+
+        func issueFromScope(
+            providerScope : Types.AppScopeRef,
+            input : Types.IssueInput,
+        ) : async* Types.IssueResult {
+            if (
+                not CapabilityScope.valid(providerScope) or
+                not scopeActive(providerScope) or
+                not validResource(input.resource) or
+                not validRights(input.rights) or
+                expiredAtCreation(input.expires_at)
+            ) return #err(#not_authorized);
+
+            let ?subject = scopeSubject(providerScope) else {
+                return #err(#not_authorized);
+            };
+
+            if (not subjectOwnsScope(subject, providerScope)) {
+                return #err(#not_authorized);
+            };
+
+            await* createGrant(
+                subject,
+                providerScope,
+                providerScope,
+                input.resource,
+                input.audience,
+                input.consumer_element,
+                normalizeRights(input.rights),
+                input.expires_at,
+                null,
+                input.max_redemptions,
+            );
+        };
+
+        func listFromScope(
+            issuerScope : Types.AppScopeRef,
+        ) : [Types.AuthorizationGrant] {
+            if (
+                not CapabilityScope.valid(issuerScope) or
+                not scopeActive(issuerScope)
+            ) return [];
+
+            let ?currentSubject = scopeSubject(issuerScope) else return [];
+
+            if (not subjectOwnsScope(currentSubject, issuerScope)) {
+                return [];
+            };
+
+            let result = List.empty<Types.AuthorizationGrant>();
+
+            for ((_, stored) in Map.entries(grantsMem.grants)) {
+                if (
+                    CapabilityScope.equal(
+                        stored.grant.issuer_scope,
+                        issuerScope,
+                    ) and
+                    stored.grant.issuer_subject == currentSubject
+                ) {
+                    List.add(result, stored.grant);
+                };
+            };
+
+            List.toArray(result);
+        };
+
+        func revokeFromScope(
+            issuerScope : Types.AppScopeRef,
+            input : Types.RevokeInput,
+        ) : Types.MutationResult {
+            if (
+                not CapabilityScope.valid(issuerScope) or
+                not scopeActive(issuerScope)
+            ) return #err(#not_authorized);
+
+            let ?stored = Map.get(
+                grantsMem.grants,
+                Text.compare,
+                input.grant_id,
+            ) else return #err(#denied);
+
+            if (
+                not CapabilityScope.equal(
+                    stored.grant.issuer_scope,
+                    issuerScope,
+                )
+            ) return #err(#not_authorized);
+
+            let ?subject = scopeSubject(issuerScope) else {
+                return #err(#not_authorized);
+            };
+
+            if (
+                not subjectOwnsScope(subject, issuerScope) or
+                stored.grant.issuer_subject != subject
+            ) return #err(#not_authorized);
+
+            if (stored.grant.revoked_at == null) {
+                let revoked =
+                    copyGrantWithRevokedAt(stored.grant, ?now());
+
+                Map.add(
+                    grantsMem.grants,
+                    Text.compare,
+                    input.grant_id,
+                    {
+                        grant = revoked;
+                        secret_hash = stored.secret_hash;
+                    },
+                );
+
+                appendAudit(
+                    "revoke",
+                    ?input.grant_id,
+                    ?subject,
+                    null,
+                    ?stored.grant.provider_scope,
+                    ?stored.grant.resource,
+                );
+            };
+
+            #ok;
+        };
+
+        func rotateResourceFromScope(
+            providerScope : Types.AppScopeRef,
+            input : Types.RotateResourceInput,
+        ) : Types.MutationResult {
+            if (
+                not CapabilityScope.valid(providerScope) or
+                not scopeActive(providerScope) or
+                not validResource(input.resource)
+            ) return #err(#not_authorized);
+
+            let ?subject = scopeSubject(providerScope) else {
+                return #err(#not_authorized);
+            };
+
+            if (not subjectOwnsScope(subject, providerScope)) {
+                return #err(#not_authorized);
+            };
+
+            let key =
+                resourceKey(providerScope, input.resource);
+            let current =
+                resourceEpoch(providerScope, input.resource);
+
+            if (current == 18_446_744_073_709_551_615) {
+                return #err(#unavailable);
+            };
+
+            Map.add(
+                epochsMem.epochs,
+                Text.compare,
+                key,
+                current + 1,
+            );
+
+            appendAudit(
+                "rotate_resource",
+                null,
+                ?subject,
+                null,
+                ?providerScope,
+                ?input.resource,
+            );
+
+            #ok;
+        };
+
+        func registerProviderFromScope(
+            providerScope : Types.AppScopeRef,
+            dispatch : Types.ProviderDispatch,
+        ) : () {
+            if (
+                CapabilityScope.valid(providerScope) and
+                scopeActive(providerScope)
+            ) {
+                Map.add(
+                    providerDispatch,
+                    Text.compare,
+                    CapabilityScope.key(providerScope),
+                    dispatch,
+                );
+            };
         };
 
         func callFromScope(
@@ -385,8 +512,8 @@ module {
             parentGrantId : ?Text,
             maxRedemptions : ?Nat,
         ) : async* Types.IssueResult {
-            let grantRandom = await IC.management.raw_rand();
-            let secretRandom = await IC.management.raw_rand();
+            let grantRandom = await* freshRandom();
+            let secretRandom = await* freshRandom();
             if (grantRandom.size() < 32 or secretRandom.size() < 32) {
                 return #err(#unavailable);
             };
@@ -485,6 +612,7 @@ module {
                     };
                 };
             };
+            false;
         };
 
         func grantEpochCurrent(grant : Types.AuthorizationGrant) : Bool {
@@ -538,7 +666,7 @@ module {
         ) : Bool {
             switch (audience, subject) {
                 case (#any_authenticated, #principal(principal)) {
-                    principal != ANONYMOUS;
+                    not isAnonymous(principal);
                 };
                 case (#principal(expected), #principal(actual)) expected == actual;
             };
@@ -590,11 +718,13 @@ module {
         func normalizeRights(
             rights : [Types.ResourceRight],
         ) : [Types.ResourceRight] {
-            var result : [Types.ResourceRight] = [];
-            for (right in [#read, #write, #reshare].vals()) {
-                if (hasRight(rights, right)) result := Array.concat(result, [right]);
-            };
-            result;
+            let allRights : [Types.ResourceRight] = [#read, #write, #reshare];
+            Array.filter<Types.ResourceRight>(
+                allRights,
+                func(right : Types.ResourceRight) : Bool {
+                    hasRight(rights, right);
+                },
+            );
         };
 
         func rightsSubset(
