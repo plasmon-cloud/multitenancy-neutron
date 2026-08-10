@@ -8,6 +8,7 @@ on:
       - scripts/apply-mtn-0.2.py
       - scripts/apply-mtn-0.2-service-fixes.py
       - scripts/apply-mtn-0.2-bound-api.py
+      - scripts/apply-mtn-0.2-compile-fixes.py
       - .github/workflows/mtn-0.2-agent.yml
       - apps/kernel/backend/authorization/**
       - apps/kernel/backend/memory/authorization_grants/**
@@ -35,6 +36,7 @@ jobs:
           python3 scripts/apply-mtn-0.2.py 2>&1 | tee /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-service-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
           python3 scripts/apply-mtn-0.2-bound-api.py 2>&1 | tee -a /tmp/mtn-apply.log
+          python3 scripts/apply-mtn-0.2-compile-fixes.py 2>&1 | tee -a /tmp/mtn-apply.log
           git diff --check 2>&1 | tee -a /tmp/mtn-apply.log
 
       - name: Install Nix
