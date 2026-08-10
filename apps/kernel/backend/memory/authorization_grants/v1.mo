@@ -2,8 +2,9 @@ import Map "mo:core/Map";
 import AuthorizationTypes "../../authorization/Types";
 
 module {
-    // Stable MTN 0.2 authorization grants. Bearer tokens/secrets are never
-    // members of this schema; only the domain-separated secret hash is stored.
+    // Stable multitenancy-neutron 0.2 authorization grants. Bearer
+    // tokens/secrets are never members of this schema; only the
+    // domain-separated secret hash is stored.
     public type Mem = {
         grants : Map.Map<Text, AuthorizationTypes.StoredGrant>;
     };
