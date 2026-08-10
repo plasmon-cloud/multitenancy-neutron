@@ -1,0 +1,90 @@
+name: MTN 0.2 Agent Gate
+
+on:
+  push:
+    branches:
+      - version-0.2.0
+    paths:
+      - scripts/apply-mtn-0.2.py
+      - .github/workflows/mtn-0.2-agent.yml
+      - apps/kernel/backend/authorization/**
+      - apps/kernel/backend/memory/authorization_grants/**
+      - apps/kernel/backend/memory/authorization_resource_epochs/**
+      - apps/kernel/backend/memory/authorization_audit/**
+      - apps/kernel/test/motoko/authorization_service_test.mo
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout version-0.2.0
+        uses: actions/checkout@v4
+        with:
+          ref: version-0.2.0
+
+      - name: Apply MTN 0.2 integration patch
+        run: |
+          set -euxo pipefail
+          python3 scripts/apply-mtn-0.2.py
+          git diff --check
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            npm ci
+          '
+
+      - name: Focused authorization Motoko test
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            cd apps/kernel
+            MOTOKO_TEST=authorization_service_test.mo bun test/motoko/run.ts
+          '
+
+      - name: Kernel package
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            npm --workspace neutron-kernel run package
+          '
+
+      - name: Existing allocator regression
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            cd apps/kernel
+            MOTOKO_TEST=app_instance_allocation_test.mo bun test/motoko/run.ts
+          '
+
+      - name: Core tests
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            npm test
+          '
+
+      - name: Commit implementation
+        if: success()
+        run: |
+          set -euxo pipefail
+          if git diff --quiet; then
+            echo "No integration changes to commit"
+            exit 0
+          fi
+          git config user.name "plasmon-cloud automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/kernel packages/neutron-compiler packages/neutron-tools packages/neutron-motoko-capabilities .github/workflows/kernel-ci.yml
+          git commit -m "Implement MTN 0.2 resource capabilities"
+          git push origin HEAD:version-0.2.0
