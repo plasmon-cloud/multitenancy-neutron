@@ -106,11 +106,17 @@ jobs:
               diagnostic="$(tail -n 1 "$log" || true)"
             fi
             post_status "$context" failure "${diagnostic:-failed with exit $code}"
-            while IFS= read -r failed; do
-              [ -z "$failed" ] && continue
-              safe="$(printf '%s' "$failed" | sed 's#[^A-Za-z0-9-]#-#g' | tr -s '-' | cut -c1-78)"
-              post_status "failure-${context}-${safe}" failure "$failed"
-            done < <(grep -E '^\(fail\)|^[0-9]+ \|.*error:' "$log" | tail -n 5 || true)
+
+            local index=0
+            while IFS= read -r detail; do
+              [ -z "$detail" ] && continue
+              index=$((index + 1))
+              safe="$(printf '%s' "$detail" | sed 's#[^A-Za-z0-9-]#-#g' | tr -s '-' | cut -c1-92)"
+              post_status "diag-${context}-${index}-${safe}" failure "$detail"
+            done < <(
+              grep -E '^::group::|^\(fail\)|^[0-9]+ \||^error:|^Expected|^Received|^[[:space:]]*expected:|^[[:space:]]*received:' "$log" \
+                | tail -n 18 || true
+            )
             return "$code"
           }
 
