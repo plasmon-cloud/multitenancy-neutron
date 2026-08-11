@@ -43,6 +43,24 @@ test("kernel package contains the expected manifest, lock and candid", async () 
   expect(packagedManifest.memory.kernel_activation.version).toBe(1);
   expect(packagedManifest.memory.kernel_activation.migrations).toEqual([]);
 
+  for (const root of [
+    "authorization_grants",
+    "authorization_resource_epochs",
+    "authorization_audit",
+  ]) {
+    expect(packagedManifest.memory[root].version).toBe(1);
+    expect(Object.keys(packagedManifest.memory[root].schemas)).toEqual(["1"]);
+    expect(packagedManifest.memory[root].migrations).toEqual([]);
+    expect(packagedLock.memory[root].schemas["1"]).toBeDefined();
+    expect(Object.keys(packagedLock.memory[root].migrations ?? {})).toHaveLength(0);
+
+    expect(packagedArchive.manifest.memory?.[root]?.version).toBe(1);
+    expect(
+      Object.keys(packagedArchive.manifest.memory?.[root]?.schemas ?? {}),
+    ).toEqual(["1"]);
+    expect(packagedArchive.manifest.memory?.[root]?.migrations).toEqual([]);
+  }
+
   expect(packagedLock).toEqual(lock);
 
   expect(packagedArchive.manifest.memory?.kernel?.version).toBe(3);
@@ -59,6 +77,9 @@ test("kernel package contains the expected manifest, lock and candid", async () 
   expect(candid).toContain("kernel_activation:");
 
   for (const method of [
+    "kernel_authorization_capabilities",
+    "kernel_authorization_inspect",
+    "kernel_authorization_redeem",
     "kernel_certified_assets_scope_info",
     "kernel_certified_assets_usage",
     "kernel_certified_assets_diagnostics",
@@ -69,5 +90,15 @@ test("kernel package contains the expected manifest, lock and candid", async () 
     "kernel_publication_entropy_initialize",
   ]) {
     expect(candid).toContain(`${method}:`);
+  }
+
+  for (const forbidden of [
+    "kernel_authorization_issue",
+    "kernel_authorization_list",
+    "kernel_authorization_revoke",
+    "kernel_authorization_rotate_resource",
+    "kernel_authorization_release",
+  ]) {
+    expect(candid).not.toContain(`${forbidden}:`);
   }
 });
