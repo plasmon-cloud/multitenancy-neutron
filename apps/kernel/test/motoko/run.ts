@@ -25,6 +25,7 @@ const compiledTests = [
 ];
 const interpretedTests = [
   "authorization_service_test.mo",
+  "authorization_provider_registration_lifecycle_test.mo",
   "authorization_upgrade_persistence_test.mo",
   "authenticated_forest_lifecycle_test.mo",
   "backend_calls_test.mo",
