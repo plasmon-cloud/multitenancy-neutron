@@ -42,6 +42,18 @@ jobs:
             npm ci
           '
 
+      # MTN 0.2 is an additive upgrade over the frozen 0.1 persistence and
+      # allocator surface. Keep this branch-specific because later releases
+      # may intentionally evolve beyond the exact 0.1 -> 0.2 delta.
+      - name: MTN 0.1 to 0.2 upgrade compatibility
+        if: github.ref == 'refs/heads/version-0.2.0' || github.base_ref == 'version-0.2.0'
+        run: |
+          git fetch --no-tags origin refs/heads/version-0.1.0:refs/remotes/origin/version-0.1.0
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            node scripts/verify-mtn-0.2-upgrade.mjs
+          '
+
       # Package first because the kernel test suite validates generated
       # artifacts produced by the normal packaging pipeline. Do not run a
       # separate build here: package already performs the build.
