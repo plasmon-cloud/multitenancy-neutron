@@ -103,6 +103,8 @@ jobs:
           unexpected="$(printf '%s\n' "$status_text" | awk '\
             NF > 0 && \
             $2 != "apps/kernel/backend/main.mo" && \
+            $2 != "apps/kernel/backend/_neutron.mo" && \
+            $2 != "apps/kernel/neutron.json" && \
             $2 != "apps/kernel/neutron.lock.json" && \
             $2 != "apps/kernel/certified-assets-candidate-binding.json" { print }')"
           if [ -n "$unexpected" ]; then
@@ -127,6 +129,8 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add \
             apps/kernel/backend/main.mo \
+            apps/kernel/backend/_neutron.mo \
+            apps/kernel/neutron.json \
             apps/kernel/neutron.lock.json \
             apps/kernel/certified-assets-candidate-binding.json
           if ! git diff --cached --quiet; then
