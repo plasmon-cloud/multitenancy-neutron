@@ -1,0 +1,56 @@
+name: MTN 0.2 Certified Assets Binding Refresh
+
+on:
+  push:
+    branches:
+      - version-0.2.0
+    paths:
+      - .github/workflows/mtn-0.2-binding-refresh.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  statuses: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: version-0.2.0
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Install dependencies
+        run: nix develop --command bash -lc 'set -euxo pipefail; npm ci'
+
+      - name: Refresh canonical binding
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            npm --workspace neutron-kernel run certified-assets:candidate-binding:write
+            npm --workspace neutron-kernel run certified-assets:candidate-binding
+          '
+
+      - name: Require only binding output changed
+        run: |
+          set -euxo pipefail
+          git diff --check
+          changed="$(git status --short)"
+          printf '%s\n' "$changed"
+          unexpected="$(printf '%s\n' "$changed" | awk '$2 != "apps/kernel/certified-assets-candidate-binding.json" { print }')"
+          test -z "$unexpected"
+
+      - name: Commit refreshed binding
+        run: |
+          set -euxo pipefail
+          git config user.name "plasmon-cloud automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/kernel/certified-assets-candidate-binding.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Refresh Certified Assets candidate binding [skip ci]"
+            git push origin HEAD:version-0.2.0
+          fi
