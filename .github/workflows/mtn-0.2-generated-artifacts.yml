@@ -107,6 +107,12 @@ jobs:
             $2 != "apps/kernel/certified-assets-candidate-binding.json" { print }')"
           if [ -n "$unexpected" ]; then
             printf 'Unexpected generated changes:\n%s\n' "$unexpected" >>/tmp/generated-scope.log
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              path="$(printf '%s\n' "$line" | awk '{print $2}')"
+              safe_path="$(printf '%s' "$path" | sed 's#[/._]#-#g' | cut -c1-95)"
+              post_status "unexpected-${safe_path}" failure "canonical generator changed ${path}"
+            done <<< "$unexpected"
             diff_code=1
           fi
           set -e
