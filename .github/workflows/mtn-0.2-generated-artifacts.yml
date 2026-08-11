@@ -43,32 +43,80 @@ jobs:
         run: |
           nix develop --command bash -lc 'set -euxo pipefail; npm ci'
 
-      - name: Generate canonical Kernel artifacts
+      - name: Generate and commit canonical artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          nix develop --command bash -lc '
-            set -euxo pipefail
-            npm --workspace neutron-kernel run package
-            npm --workspace neutron-kernel run certified-assets:candidate-binding:write
-            npm --workspace neutron-kernel run certified-assets:candidate-binding
-          '
+          set -euo pipefail
 
-      - name: Verify generated change scope
-        run: |
-          set -euxo pipefail
-          git diff --check
-          unexpected="$({ git status --short || true; } | awk '\
+          post_status() {
+            local context="$1"
+            local state="$2"
+            local description="$3"
+            description="$(printf '%s' "$description" | tr '\n\r' '  ' | cut -c1-130)"
+            jq -n --arg state "$state" --arg context "mtn-0.2/generated-$context" --arg description "$description" \
+              '{state:$state,context:$context,description:$description}' >/tmp/status.json
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              --data-binary @/tmp/status.json >/dev/null
+          }
+
+          gate() {
+            local context="$1"
+            shift
+            local log="/tmp/generated-${context}.log"
+            set +e
+            "$@" 2>&1 | tee "$log"
+            local code=${PIPESTATUS[0]}
+            set -e
+            if [ "$code" -eq 0 ]; then
+              post_status "$context" success "passed"
+              return 0
+            fi
+            local diagnostic
+            diagnostic="$(grep -Eai 'error|fail|unexpected|mismatch|missing|changed|dirty' "$log" | tail -n 1 || true)"
+            if [ -z "$diagnostic" ]; then diagnostic="$(tail -n 1 "$log" || true)"; fi
+            post_status "$context" failure "${diagnostic:-failed with exit $code}"
+            return "$code"
+          }
+
+          gate package \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel run package'
+
+          gate binding-write \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding:write'
+
+          gate binding-check \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding'
+
+          set +e
+          git diff --check >/tmp/generated-scope.log 2>&1
+          diff_code=$?
+          status_text="$(git status --short)"
+          unexpected="$(printf '%s\n' "$status_text" | awk '\
+            NF > 0 && \
             $2 != "apps/kernel/backend/main.mo" && \
             $2 != "apps/kernel/neutron.lock.json" && \
-            $2 != "apps/kernel/certified-assets-candidate-binding.json" && \
-            $2 != ".github/workflows/mtn-0.2-generated-artifacts.yml" { print }')"
+            $2 != "apps/kernel/certified-assets-candidate-binding.json" { print }')"
           if [ -n "$unexpected" ]; then
-            printf 'Unexpected generated changes:\n%s\n' "$unexpected" >&2
-            exit 1
+            printf 'Unexpected generated changes:\n%s\n' "$unexpected" >>/tmp/generated-scope.log
+            diff_code=1
           fi
+          set -e
+          if [ "$diff_code" -ne 0 ]; then
+            post_status change-scope failure "unexpected canonical generated change scope"
+            cat /tmp/generated-scope.log
+            exit "$diff_code"
+          fi
+          post_status change-scope success "only canonical Kernel generated artifacts changed"
 
-      - name: Commit canonical generated artifacts
-        run: |
-          set -euxo pipefail
           git config user.name "plasmon-cloud automation"
           git config user.email "actions@users.noreply.github.com"
           git add \
@@ -79,6 +127,7 @@ jobs:
             git commit -m "Refresh MTN 0.2 generated Kernel artifacts [skip ci]"
             git push origin HEAD:version-0.2.0
           fi
+          post_status commit success "canonical generated artifacts committed"
 
       - name: Publish refresh success
         if: success()
