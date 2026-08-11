@@ -106,6 +106,11 @@ jobs:
               diagnostic="$(tail -n 1 "$log" || true)"
             fi
             post_status "$context" failure "${diagnostic:-failed with exit $code}"
+            while IFS= read -r failed; do
+              [ -z "$failed" ] && continue
+              safe="$(printf '%s' "$failed" | sed 's#[^A-Za-z0-9-]#-#g' | tr -s '-' | cut -c1-78)"
+              post_status "failure-${context}-${safe}" failure "$failed"
+            done < <(grep -E '^\(fail\)|^[0-9]+ \|.*error:' "$log" | tail -n 5 || true)
             return "$code"
           }
 
@@ -121,21 +126,29 @@ jobs:
             nix develop --command bash -lc \
             'set -euxo pipefail; npm --workspace neutron-compiler test'
 
+          gate certified-assets-binding-write \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding:write'
+
+          gate certified-assets-binding \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding'
+
+          gate kernel-test \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel test'
+
           gate kernel-package \
             nix develop --command bash -lc \
             'set -euxo pipefail; npm --workspace neutron-kernel run package'
-
-          gate upgrade \
-            nix develop --command bash -lc \
-            'set -euxo pipefail; node scripts/verify-mtn-0.2-upgrade.mjs'
 
           gate allocator-0.1 \
             nix develop --command bash -lc \
             'set -euxo pipefail; cd apps/kernel; MOTOKO_TEST=app_instance_allocation_test.mo MOTOKO_JOBS=1 bun test/motoko/run.ts'
 
-          gate certified-assets-binding \
+          gate upgrade \
             nix develop --command bash -lc \
-            'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding'
+            'set -euxo pipefail; node scripts/verify-mtn-0.2-upgrade.mjs'
 
           gate repository-core \
             nix develop --command bash -lc \
@@ -144,4 +157,4 @@ jobs:
           gate diff-hygiene \
             bash -lc 'set -euxo pipefail; git diff --check; test -z "$(git status --short)"'
 
-          post_status verification success "all verification gates passed"
+          post_status verification success "all final acceptance gates passed"
