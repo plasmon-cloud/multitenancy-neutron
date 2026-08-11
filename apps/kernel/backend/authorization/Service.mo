@@ -465,9 +465,6 @@ module {
                 not scopeActive(providerScope)
             ) return;
 
-            let ?subject = scopeSubject(providerScope) else return;
-            if (not subjectOwnsScope(subject, providerScope)) return;
-
             Map.add(
                 providerDispatch,
                 Text.compare,
