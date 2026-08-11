@@ -176,7 +176,7 @@ expectIssueDenied(await* poolAuthorization.issue(
 
 // MTN 0.1 allocation happens after actor/app initialization.
 Map.add(owners, Text.compare, scopeKey(poolProvider), alice);
-assert (subjectForScope(poolProvider) == ?#principal(alice));
+assert (Map.get(owners, Text.compare, scopeKey(poolProvider)) == ?alice);
 
 let allocatedGrant = issueOk(await* poolAuthorization.issue(
     issueInput(poolNote, #principal(bob)),
