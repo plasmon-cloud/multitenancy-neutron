@@ -23,6 +23,7 @@ concurrency:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   verify:
@@ -42,47 +43,85 @@ jobs:
         run: |
           nix develop --command bash -lc 'set -euxo pipefail; npm ci'
 
-      - name: Focused authorization Motoko tests
+      - name: Run verification gates
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          nix develop --command bash -lc '
-            set -euxo pipefail
-            cd apps/kernel
-            MOTOKO_TEST=authorization_service_test.mo,authorization_upgrade_persistence_test.mo MOTOKO_JOBS=1 bun test/motoko/run.ts
-          '
+          set -euo pipefail
 
-      - name: Public Motoko capability package
-        run: |
-          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-motoko-capabilities test'
+          post_status() {
+            local context="$1"
+            local state="$2"
+            local description="$3"
+            description="$(printf '%s' "$description" | tr '\n\r' '  ' | cut -c1-130)"
+            jq -n \
+              --arg state "$state" \
+              --arg context "mtn-0.2/$context" \
+              --arg description "$description" \
+              '{state:$state,context:$context,description:$description}' \
+              >/tmp/status.json
+            curl -fsSL \
+              -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              --data-binary @/tmp/status.json >/dev/null
+          }
 
-      - name: Compiler tests
-        run: |
-          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-compiler test'
+          gate() {
+            local context="$1"
+            shift
+            local log="/tmp/mtn-${context//\//-}.log"
+            set +e
+            "$@" 2>&1 | tee "$log"
+            local code=${PIPESTATUS[0]}
+            set -e
+            if [ "$code" -eq 0 ]; then
+              post_status "$context" success "passed"
+              return 0
+            fi
+            local diagnostic
+            diagnostic="$(grep -Eai 'error|fail|unexpected|trap|assert|mismatch|missing|changed' "$log" | tail -n 1 || true)"
+            if [ -z "$diagnostic" ]; then
+              diagnostic="$(tail -n 1 "$log" || true)"
+            fi
+            post_status "$context" failure "${diagnostic:-failed with exit $code}"
+            return "$code"
+          }
 
-      - name: Kernel package
-        run: |
-          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-kernel run package'
+          gate focused-auth \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; cd apps/kernel; MOTOKO_TEST=authorization_service_test.mo,authorization_upgrade_persistence_test.mo MOTOKO_JOBS=1 bun test/motoko/run.ts'
 
-      - name: Upgrade schema and persistence verifier
-        run: |
-          nix develop --command bash -lc 'set -euxo pipefail; node scripts/verify-mtn-0.2-upgrade.mjs'
+          gate public-capabilities \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-motoko-capabilities test'
 
-      - name: Existing MTN 0.1 allocator regression
-        run: |
-          nix develop --command bash -lc '
-            set -euxo pipefail
-            cd apps/kernel
-            MOTOKO_TEST=app_instance_allocation_test.mo MOTOKO_JOBS=1 bun test/motoko/run.ts
-          '
+          gate compiler \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-compiler test'
 
-      - name: Canonical Certified Assets binding check
-        run: |
-          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding'
+          gate kernel-package \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel run package'
 
-      - name: Repository core suite
-        run: |
-          nix develop --command bash -lc 'set -euxo pipefail; npm test'
+          gate upgrade \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; node scripts/verify-mtn-0.2-upgrade.mjs'
 
-      - name: Diff hygiene
-        run: |
-          git diff --check
-          git status --short
+          gate allocator-0.1 \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; cd apps/kernel; MOTOKO_TEST=app_instance_allocation_test.mo MOTOKO_JOBS=1 bun test/motoko/run.ts'
+
+          gate certified-assets-binding \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding'
+
+          gate repository-core \
+            nix develop --command bash -lc \
+            'set -euxo pipefail; npm test'
+
+          gate diff-hygiene \
+            bash -lc 'set -euxo pipefail; git diff --check; test -z "$(git status --short)"'
