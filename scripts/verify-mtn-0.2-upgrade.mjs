@@ -24,6 +24,12 @@ function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function emptyMigrations(value) {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return typeof value === "object" && Object.keys(value).length === 0;
+}
+
 const oldManifest = JSON.parse(gitShow(MANIFEST));
 const newManifest = JSON.parse(read(MANIFEST));
 const oldLock = JSON.parse(gitShow(LOCK));
@@ -74,7 +80,7 @@ for (const [root, source] of expectedNewRoots) {
   const definition = newManifest.memory[root];
   requireCondition(definition?.version === 1, `${root}: expected version 1`);
   requireCondition(
-    JSON.stringify(definition?.migrations) === "[]",
+    Array.isArray(definition?.migrations) && definition.migrations.length === 0,
     `${root}: unexpected migration`,
   );
   requireCondition(
@@ -104,7 +110,7 @@ for (const root of expectedNewRoots.keys()) {
   const definition = newLock.memory[root];
   requireCondition(definition?.schemas?.["1"], `lock missing ${root} v1 schema`);
   requireCondition(
-    JSON.stringify(definition?.migrations ?? {}) === "{}",
+    emptyMigrations(definition?.migrations),
     `lock contains unexpected ${root} migration`,
   );
 }
