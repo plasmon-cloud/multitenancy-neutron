@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  statuses: write
 
 jobs:
   update:
@@ -18,30 +17,6 @@ jobs:
           ref: version-0.2.0
           fetch-depth: 0
 
-      - name: Report exact matcher state
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          node <<'NODE' >/tmp/matches.txt
-          const fs = require('node:fs');
-          const text = fs.readFileSync('apps/kernel/test/install.test.ts', 'utf8');
-          const init = 'NeutronMemory_a6_kernel_r11_app_catalog,[\\s\\S]*?"development"';
-          const roots = `  expect(Object.keys(manifest.memory).sort()).toEqual([\n    "app_catalog",\n    "app_instance_lifecycle",\n    "app_instances",\n    "kernel",\n    "kernel_activation",\n    "tenants",\n  ]);`;
-          console.log(text.includes(init) ? 'expect-init-match' : 'expect-init-missing');
-          console.log(text.includes(roots) ? 'expect-roots-match' : 'expect-roots-missing');
-          NODE
-          while IFS= read -r context; do
-            jq -n --arg state success --arg context "mtn-0.2/$context" --arg description "$context" \
-              '{state:$state,context:$context,description:$description}' >/tmp/status.json
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-              --data-binary @/tmp/status.json >/dev/null
-          done </tmp/matches.txt
-
       - name: Apply exact reviewed expectation changes
         shell: bash
         run: |
@@ -50,8 +25,8 @@ jobs:
           const path = 'apps/kernel/test/install.test.ts';
           let text = fs.readFileSync(path, 'utf8');
 
-          const oldInitSegment = 'NeutronMemory_a6_kernel_r11_app_catalog,[\\s\\S]*?"development"';
-          const newInitSegment = 'NeutronMemory_a6_kernel_r11_app_catalog,[\\s\\S]*?NeutronMemory_a6_kernel_r24_authorization_grants,[\\s\\S]*?NeutronMemory_a6_kernel_r29_authorization_resource_epochs,[\\s\\S]*?NeutronMemory_a6_kernel_r20_authorization_audit,[\\s\\S]*?"development"';
+          const oldInitSegment = 'NeutronMemory_a6_kernel_r11_app_catalog,"development",NeutronActiveAppInstanceInventory';
+          const newInitSegment = 'NeutronMemory_a6_kernel_r11_app_catalog,NeutronMemory_a6_kernel_r24_authorization_grants,NeutronMemory_a6_kernel_r29_authorization_resource_epochs,NeutronMemory_a6_kernel_r20_authorization_audit,"development",NeutronActiveAppInstanceInventory';
           if (text.split(oldInitSegment).length !== 2) {
             throw new Error('expected exactly one old Kernel.Init memory segment');
           }
