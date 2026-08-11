@@ -48,6 +48,11 @@ import TenantsMemory "./memory/tenants/v1";
 import AppInstancesMemory "./memory/app_instances/v1";
 import AppInstanceLifecycleMemory "./memory/app_instance_lifecycle/v1";
 import AppCatalogMemory "./memory/app_catalog/v1";
+import AuthorizationGrantsMemory "./memory/authorization_grants/v1";
+import AuthorizationEpochsMemory "./memory/authorization_resource_epochs/v1";
+import AuthorizationAuditMemory "./memory/authorization_audit/v1";
+import AuthorizationService "./authorization/Service";
+import AuthorizationTypes "./authorization/Types";
 import AppInstanceAllocation "./app_instances/Allocation";
 import ActivationService "./activation/Service";
 import Array "mo:core/Array";
@@ -578,6 +583,9 @@ module {
         appInstancesMem : AppInstancesMemory.Mem,
             appInstanceLifecycleMem : AppInstanceLifecycleMemory.Mem,
             appCatalogMem : AppCatalogMemory.Mem,
+        authorizationGrantsMem : AuthorizationGrantsMemory.Mem,
+        authorizationEpochsMem : AuthorizationEpochsMemory.Mem,
+        authorizationAuditMem : AuthorizationAuditMemory.Mem,
         runningDeploymentId : Text,
         activeAppInstanceInventory : [InstallTypes.RuntimeApp],
         canisterPrincipal : Principal,
@@ -747,6 +755,92 @@ module {
             outgoingCycleAccounting,
         );
         let canisterId = Principal.toText(canisterPrincipal);
+
+        func authorizationScopeActive(
+            scope : CapabilityTypes.AppScope,
+        ) : Bool {
+            if (
+                not InstallMemory.scopeActive(
+                    mem.install,
+                    runningDeploymentId,
+                    scope,
+                )
+            ) return false;
+            switch (
+                Map.get(
+                    appInstanceLifecycleMem.retired,
+                    Text.compare,
+                    scope.app_id,
+                )
+            ) {
+                case (?true) false;
+                case _ true;
+            };
+        };
+
+        // MTN ownership is the unique current tenant grant for the physical
+        // app instance. Global Neutron administration and logical Element
+        // membership are deliberately not resource ownership.
+        func authorizationScopeOwner(
+            scope : CapabilityTypes.AppScope,
+        ) : ?Principal {
+            if (not authorizationScopeActive(scope)) return null;
+            var found : ?Principal = null;
+            for ((principal, grantedApps) in Map.entries(tenantsMem.grants)) {
+                if (
+                    principal != Principal.fromText("2vxsx-fae") and
+                    Array.any(
+                        grantedApps,
+                        func(grantedAppId : Text) : Bool {
+                            grantedAppId == scope.app_id;
+                        },
+                    )
+                ) {
+                    switch (found) {
+                        case null found := ?principal;
+                        case (?existing) {
+                            if (existing != principal) return null;
+                        };
+                    };
+                };
+            };
+            found;
+        };
+
+        let authorization = AuthorizationService.Service(
+            authorizationGrantsMem,
+            authorizationEpochsMem,
+            authorizationAuditMem,
+            authorizationScopeActive,
+            func(
+                subject : AuthorizationTypes.SubjectRef,
+                scope : AuthorizationTypes.AppScopeRef,
+            ) : Bool {
+                let #principal(principal) = subject;
+                switch (authorizationScopeOwner(scope)) {
+                    case (?owner) owner == principal;
+                    case null false;
+                };
+            },
+            func(scope : AuthorizationTypes.AppScopeRef) : ?AuthorizationTypes.SubjectRef {
+                switch (authorizationScopeOwner(scope)) {
+                    case (?owner) ?#principal(owner);
+                    case null null;
+                };
+            },
+            func(scope : AuthorizationTypes.AppScopeRef) : ?Text {
+                if (not authorizationScopeActive(scope)) return null;
+                Map.get(
+                    appInstancesMem.instances,
+                    Text.compare,
+                    scope.app_id,
+                );
+            },
+            func() : async* Blob {
+                await IC.management.raw_rand();
+            },
+            nowNanos,
+        );
 
         func dedicatedResidentOriginActive(
             instance : InstallTypes.AppInstance,
@@ -997,7 +1091,6 @@ module {
                     );
                 }];
             };
-
             switch (appIdFromAssetUrl(key)) {
                 case null {
                     if (isPackageHttpAssetPath(key)) {
@@ -1951,6 +2044,12 @@ module {
             randomness.capability(appScope);
         };
 
+        public func authorization_capability(
+            appScope : CapabilityTypes.AppScope,
+        ) : AuthorizationTypes.AuthorizationCapabilityV1 {
+            authorization.authorizationCapability(appScope);
+        };
+
         public func https_outcalls_capability(
             appScope : CapabilityTypes.AppScope,
         ) : HttpsOutcallsTypes.Capability {
@@ -2672,6 +2771,25 @@ module {
             input : { principal : Principal },
         ) : [Text] {
             tenant_apps(input.principal);
+        };
+
+        public func /*query:unauthorized*/kernel_authorization_capabilities(
+            (),
+        ) : AuthorizationTypes.CapabilityDiscovery {
+            authorization.discovery();
+        };
+
+        public func /*query:unauthorized*/kernel_authorization_inspect(
+            input : AuthorizationTypes.InspectInput,
+        ) : ?AuthorizationTypes.GrantInspection {
+            authorization.inspect(input);
+        };
+
+        public func /*update:unauthorized*/kernel_authorization_redeem(
+            input : AuthorizationTypes.RedeemInput,
+            /*caller*/ caller : Principal,
+        ) : async* AuthorizationTypes.RedeemResult {
+            await* authorization.redeem(input, caller);
         };
 
         public func /*update:unauthorized*/kernel_authorized_recover(
@@ -4179,6 +4297,15 @@ public type kernel_tenant_revoke_Output = ();
 
 public type kernel_tenant_apps_Input = (input : { principal : Principal },);
 public type kernel_tenant_apps_Output = [Text];
+
+public type kernel_authorization_capabilities_Input = ((),);
+public type kernel_authorization_capabilities_Output = AuthorizationTypes.CapabilityDiscovery;
+
+public type kernel_authorization_inspect_Input = (input : AuthorizationTypes.InspectInput,);
+public type kernel_authorization_inspect_Output = ?AuthorizationTypes.GrantInspection;
+
+public type kernel_authorization_redeem_Input = (input : AuthorizationTypes.RedeemInput);
+public type kernel_authorization_redeem_Output = AuthorizationTypes.RedeemResult;
 
 public type kernel_authorized_recover_Input = (id : Principal);
 public type kernel_authorized_recover_Output = ();
