@@ -1,0 +1,88 @@
+name: multitenancy-neutron 0.2 Verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - version-0.2.0
+    paths:
+      - apps/kernel/backend/**
+      - apps/kernel/neutron.json
+      - apps/kernel/neutron.lock.json
+      - apps/kernel/test/**
+      - apps/kernel/certified-assets-candidate-binding.json
+      - packages/neutron-compiler/**
+      - packages/neutron-motoko-capabilities/**
+      - packages/neutron-tools/**
+      - scripts/verify-mtn-0.2-upgrade.mjs
+      - .github/workflows/mtn-0.2-verification.yml
+
+concurrency:
+  group: multitenancy-neutron-0.2-verification
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout version-0.2.0
+        uses: actions/checkout@v4
+        with:
+          ref: version-0.2.0
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Install dependencies
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; npm ci'
+
+      - name: Focused authorization Motoko tests
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            cd apps/kernel
+            MOTOKO_TEST=authorization_service_test.mo,authorization_upgrade_persistence_test.mo MOTOKO_JOBS=1 bun test/motoko/run.ts
+          '
+
+      - name: Public Motoko capability package
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-motoko-capabilities test'
+
+      - name: Compiler tests
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-compiler test'
+
+      - name: Kernel package
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-kernel run package'
+
+      - name: Upgrade schema and persistence verifier
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; node scripts/verify-mtn-0.2-upgrade.mjs'
+
+      - name: Existing MTN 0.1 allocator regression
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            cd apps/kernel
+            MOTOKO_TEST=app_instance_allocation_test.mo MOTOKO_JOBS=1 bun test/motoko/run.ts
+          '
+
+      - name: Canonical Certified Assets binding check
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; npm --workspace neutron-kernel run certified-assets:candidate-binding'
+
+      - name: Repository core suite
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; npm test'
+
+      - name: Diff hygiene
+        run: |
+          git diff --check
+          git status --short
