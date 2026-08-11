@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  statuses: write
 
 jobs:
   update:
@@ -26,14 +25,18 @@ jobs:
           const path = 'apps/kernel/test/install.test.ts';
           let text = fs.readFileSync(path, 'utf8');
 
-          const oldInit = String.raw`    /NeutronModule_a6_kernel\.Init\([\s\S]*?NeutronMemory_a6_kernel_r6_kernel,[\s\S]*?NeutronMemory_a6_kernel_r17_kernel_activation,[\s\S]*?NeutronMemory_a6_kernel_r7_tenants,[\s\S]*?NeutronMemory_a6_kernel_r13_app_instances,[\s\S]*?NeutronMemory_a6_kernel_r22_app_instance_lifecycle,[\s\S]*?NeutronMemory_a6_kernel_r11_app_catalog,[\s\S]*?"development",[\s\S]*?NeutronActiveAppInstanceInventory,[\s\S]*?Principal\.fromActor\(NeutronCanisterSelf\),[\s\S]*?\)/,`;
-          const newInit = String.raw`    /NeutronModule_a6_kernel\.Init\([\s\S]*?NeutronMemory_a6_kernel_r6_kernel,[\s\S]*?NeutronMemory_a6_kernel_r17_kernel_activation,[\s\S]*?NeutronMemory_a6_kernel_r7_tenants,[\s\S]*?NeutronMemory_a6_kernel_r13_app_instances,[\s\S]*?NeutronMemory_a6_kernel_r22_app_instance_lifecycle,[\s\S]*?NeutronMemory_a6_kernel_r11_app_catalog,[\s\S]*?NeutronMemory_a6_kernel_r24_authorization_grants,[\s\S]*?NeutronMemory_a6_kernel_r29_authorization_resource_epochs,[\s\S]*?NeutronMemory_a6_kernel_r20_authorization_audit,[\s\S]*?"development",[\s\S]*?NeutronActiveAppInstanceInventory,[\s\S]*?Principal\.fromActor\(NeutronCanisterSelf\),[\s\S]*?\)/,`;
-          if (!text.includes(oldInit)) throw new Error('old Kernel.Init expectation not found exactly');
-          text = text.replace(oldInit, newInit);
+          const oldInitSegment = 'NeutronMemory_a6_kernel_r11_app_catalog,[\\s\\S]*?"development"';
+          const newInitSegment = 'NeutronMemory_a6_kernel_r11_app_catalog,[\\s\\S]*?NeutronMemory_a6_kernel_r24_authorization_grants,[\\s\\S]*?NeutronMemory_a6_kernel_r29_authorization_resource_epochs,[\\s\\S]*?NeutronMemory_a6_kernel_r20_authorization_audit,[\\s\\S]*?"development"';
+          if (text.split(oldInitSegment).length !== 2) {
+            throw new Error('expected exactly one old Kernel.Init memory segment');
+          }
+          text = text.replace(oldInitSegment, newInitSegment);
 
           const oldRoots = `  expect(Object.keys(manifest.memory).sort()).toEqual([\n    "app_catalog",\n    "app_instance_lifecycle",\n    "app_instances",\n    "kernel",\n    "kernel_activation",\n    "tenants",\n  ]);`;
           const newRoots = `  expect(Object.keys(manifest.memory).sort()).toEqual([\n    "app_catalog",\n    "app_instance_lifecycle",\n    "app_instances",\n    "authorization_audit",\n    "authorization_grants",\n    "authorization_resource_epochs",\n    "kernel",\n    "kernel_activation",\n    "tenants",\n  ]);`;
-          if (!text.includes(oldRoots)) throw new Error('old memory-root expectation not found exactly');
+          if (text.split(oldRoots).length !== 2) {
+            throw new Error('expected exactly one old memory-root expectation');
+          }
           text = text.replace(oldRoots, newRoots);
 
           fs.writeFileSync(path, text);
