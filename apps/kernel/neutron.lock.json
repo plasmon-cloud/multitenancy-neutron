@@ -55,6 +55,33 @@
         }
       },
       "migrations": {}
+    },
+    "authorization_audit": {
+      "schemas": {
+        "1": {
+          "hash": "4713fadf015c1112e89b0f6c6ce0296e87cbb59880da5c26e68794cb99b49451",
+          "entry": "6163d2e56a99559db39dbc847cfad10e57781b30a0343fb8f20dd52d40f4b772"
+        }
+      },
+      "migrations": {}
+    },
+    "authorization_grants": {
+      "schemas": {
+        "1": {
+          "hash": "8d1f72ecc084f7e947442fd226fc540fb6d6fa0a49ab8d075a354df6e0a72687",
+          "entry": "93734a096b196b85afd1a94134ae5aca6657ab3e60a5b7fc3baf63aac524bef6"
+        }
+      },
+      "migrations": {}
+    },
+    "authorization_resource_epochs": {
+      "schemas": {
+        "1": {
+          "hash": "f2985db55cfb0692be5cd14be8f67f277f9b6401d6927b548d9d16f2c249c49a",
+          "entry": "8a7d1e548ed329695117794961eb7b742acef214d2b0196f1b46af7ba0af7c89"
+        }
+      },
+      "migrations": {}
     }
   }
 }

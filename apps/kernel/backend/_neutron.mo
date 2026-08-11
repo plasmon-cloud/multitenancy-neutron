@@ -9,6 +9,9 @@ import NeutronModule_a6_kernel "main";
 import NeutronMemorySchema_a6_kernel_r11_app_catalog_v1 "memory/app_catalog/v1";
 import NeutronMemorySchema_a6_kernel_r22_app_instance_lifecycle_v1 "memory/app_instance_lifecycle/v1";
 import NeutronMemorySchema_a6_kernel_r13_app_instances_v1 "memory/app_instances/v1";
+import NeutronMemorySchema_a6_kernel_r19_authorization_audit_v1 "memory/authorization_audit/v1";
+import NeutronMemorySchema_a6_kernel_r20_authorization_grants_v1 "memory/authorization_grants/v1";
+import NeutronMemorySchema_a6_kernel_r29_authorization_resource_epochs_v1 "memory/authorization_resource_epochs/v1";
 import NeutronMemorySchema_a6_kernel_r6_kernel_v3 "memory/kernel/v3";
 import NeutronMemorySchema_a6_kernel_r17_kernel_activation_v1 "memory/activation/v1";
 import NeutronMemorySchema_a6_kernel_r7_tenants_v1 "memory/tenants/v1";
@@ -80,6 +83,33 @@ shared({caller = NeutronInstaller}) persistent actor class Class<system>() = Neu
     transient let #v1(NeutronMemory_a6_kernel_r13_app_instances) = NeutronMemoryStore_a6_kernel_r13_app_instances;
 
 
+    type NeutronMemoryType_a6_kernel_r19_authorization_audit = {
+        #v1 : NeutronMemorySchema_a6_kernel_r19_authorization_audit_v1.Mem;
+    };
+
+    let NeutronMemoryStore_a6_kernel_r19_authorization_audit:NeutronMemoryType_a6_kernel_r19_authorization_audit = #v1(NeutronMemorySchema_a6_kernel_r19_authorization_audit_v1.init());
+
+    transient let #v1(NeutronMemory_a6_kernel_r19_authorization_audit) = NeutronMemoryStore_a6_kernel_r19_authorization_audit;
+
+
+    type NeutronMemoryType_a6_kernel_r20_authorization_grants = {
+        #v1 : NeutronMemorySchema_a6_kernel_r20_authorization_grants_v1.Mem;
+    };
+
+    let NeutronMemoryStore_a6_kernel_r20_authorization_grants:NeutronMemoryType_a6_kernel_r20_authorization_grants = #v1(NeutronMemorySchema_a6_kernel_r20_authorization_grants_v1.init());
+
+    transient let #v1(NeutronMemory_a6_kernel_r20_authorization_grants) = NeutronMemoryStore_a6_kernel_r20_authorization_grants;
+
+
+    type NeutronMemoryType_a6_kernel_r29_authorization_resource_epochs = {
+        #v1 : NeutronMemorySchema_a6_kernel_r29_authorization_resource_epochs_v1.Mem;
+    };
+
+    let NeutronMemoryStore_a6_kernel_r29_authorization_resource_epochs:NeutronMemoryType_a6_kernel_r29_authorization_resource_epochs = #v1(NeutronMemorySchema_a6_kernel_r29_authorization_resource_epochs_v1.init());
+
+    transient let #v1(NeutronMemory_a6_kernel_r29_authorization_resource_epochs) = NeutronMemoryStore_a6_kernel_r29_authorization_resource_epochs;
+
+
     type NeutronMemoryType_a6_kernel_r6_kernel = {
         #v3 : NeutronMemorySchema_a6_kernel_r6_kernel_v3.Mem;
     };
@@ -116,12 +146,12 @@ shared({caller = NeutronInstaller}) persistent actor class Class<system>() = Neu
     };
 
 
-    transient let NeutronActiveAppInstanceInventory = [{ app_id = "kernel"; version = 306; capability_plan_fingerprint = "fa74bbf0c64cf2946f1bad5a78727c93cf0ad8e8a686cd520f4ba28bdb305891"; resident_frame_security = #credentialless_opaque_v1 }];
+    transient let NeutronActiveAppInstanceInventory = [{ app_id = "kernel"; version = 306; capability_plan_fingerprint = "01858a4978c4dd06bcf61b690cc4b73ad1827c669f8e45f11aa29ba581caa583"; resident_frame_security = #credentialless_opaque_v1 }];
 
 
 
 
-    transient let NeutronKernel = NeutronModule_a6_kernel.Init(NeutronMemory_a6_kernel_r6_kernel,NeutronMemory_a6_kernel_r17_kernel_activation,NeutronMemory_a6_kernel_r7_tenants,NeutronMemory_a6_kernel_r13_app_instances,NeutronMemory_a6_kernel_r22_app_instance_lifecycle,NeutronMemory_a6_kernel_r11_app_catalog,"development",NeutronActiveAppInstanceInventory,NeutronPrim.principalOfActor(NeutronActor));
+    transient let NeutronKernel = NeutronModule_a6_kernel.Init(NeutronMemory_a6_kernel_r6_kernel,NeutronMemory_a6_kernel_r17_kernel_activation,NeutronMemory_a6_kernel_r7_tenants,NeutronMemory_a6_kernel_r13_app_instances,NeutronMemory_a6_kernel_r22_app_instance_lifecycle,NeutronMemory_a6_kernel_r11_app_catalog,NeutronMemory_a6_kernel_r20_authorization_grants,NeutronMemory_a6_kernel_r29_authorization_resource_epochs,NeutronMemory_a6_kernel_r19_authorization_audit,"development",NeutronActiveAppInstanceInventory,NeutronPrim.principalOfActor(NeutronActor));
 
 
 
@@ -248,6 +278,21 @@ shared({caller = NeutronInstaller}) persistent actor class Class<system>() = Neu
     public query({ caller = NeutronCaller }) func kernel_tenant_apps(NeutronRequest: NeutronModule_a6_kernel.kernel_tenant_apps_Input) : async NeutronModule_a6_kernel.kernel_tenant_apps_Output {
         assert(NeutronKernel.is_authorized(NeutronCaller));
          NeutronKernel.kernel_tenant_apps(NeutronRequest )
+    };
+
+
+    public query({ caller = NeutronCaller }) func kernel_authorization_capabilities(NeutronRequest: NeutronModule_a6_kernel.kernel_authorization_capabilities_Input) : async NeutronModule_a6_kernel.kernel_authorization_capabilities_Output {
+         NeutronKernel.kernel_authorization_capabilities(NeutronRequest )
+    };
+
+
+    public query({ caller = NeutronCaller }) func kernel_authorization_inspect(NeutronRequest: NeutronModule_a6_kernel.kernel_authorization_inspect_Input) : async NeutronModule_a6_kernel.kernel_authorization_inspect_Output {
+         NeutronKernel.kernel_authorization_inspect(NeutronRequest )
+    };
+
+
+    public shared({ caller = NeutronCaller }) func kernel_authorization_redeem(NeutronRequest: NeutronModule_a6_kernel.kernel_authorization_redeem_Input) : async NeutronModule_a6_kernel.kernel_authorization_redeem_Output {
+        await* NeutronKernel.kernel_authorization_redeem(NeutronRequest ,NeutronCaller)
     };
 
 
@@ -646,7 +691,7 @@ shared({caller = NeutronInstaller}) persistent actor class Class<system>() = Neu
         assembler_id = "neutron_actor_v25";
         compiler_id = "unknown";
         apps = NeutronKernel.runtime_app_instances("development");
-        memories = [{ id = "app_catalog"; owner = "kernel"; version = 1; schema = "memory/app_catalog/v1" }, { id = "app_instance_lifecycle"; owner = "kernel"; version = 1; schema = "memory/app_instance_lifecycle/v1" }, { id = "app_instances"; owner = "kernel"; version = 1; schema = "memory/app_instances/v1" }, { id = "kernel"; owner = "kernel"; version = 3; schema = "memory/kernel/v3" }, { id = "kernel_activation"; owner = "kernel"; version = 1; schema = "memory/activation/v1" }, { id = "tenants"; owner = "kernel"; version = 1; schema = "memory/tenants/v1" }];
+        memories = [{ id = "app_catalog"; owner = "kernel"; version = 1; schema = "memory/app_catalog/v1" }, { id = "app_instance_lifecycle"; owner = "kernel"; version = 1; schema = "memory/app_instance_lifecycle/v1" }, { id = "app_instances"; owner = "kernel"; version = 1; schema = "memory/app_instances/v1" }, { id = "authorization_audit"; owner = "kernel"; version = 1; schema = "memory/authorization_audit/v1" }, { id = "authorization_grants"; owner = "kernel"; version = 1; schema = "memory/authorization_grants/v1" }, { id = "authorization_resource_epochs"; owner = "kernel"; version = 1; schema = "memory/authorization_resource_epochs/v1" }, { id = "kernel"; owner = "kernel"; version = 3; schema = "memory/kernel/v3" }, { id = "kernel_activation"; owner = "kernel"; version = 1; schema = "memory/activation/v1" }, { id = "tenants"; owner = "kernel"; version = 1; schema = "memory/tenants/v1" }];
       }
     };
 
