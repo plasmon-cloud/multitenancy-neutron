@@ -1,0 +1,109 @@
+name: multitenancy-neutron 0.2 Generated Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - version-0.2.0
+    paths:
+      - .github/workflows/mtn-0.2-generated-artifacts.yml
+
+permissions:
+  contents: write
+  statuses: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout version-0.2.0
+        uses: actions/checkout@v4
+        with:
+          ref: version-0.2.0
+          fetch-depth: 0
+
+      - name: Publish refresh start
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -n --arg state pending --arg context mtn-0.2/generated-artifacts --arg description "canonical generated-artifact refresh started" \
+            '{state:$state,context:$context,description:$description}' >/tmp/status.json
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data-binary @/tmp/status.json >/dev/null
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Install dependencies
+        run: |
+          nix develop --command bash -lc 'set -euxo pipefail; npm ci'
+
+      - name: Generate canonical Kernel artifacts
+        run: |
+          nix develop --command bash -lc '
+            set -euxo pipefail
+            npm --workspace neutron-kernel run package
+            npm --workspace neutron-kernel run certified-assets:candidate-binding:write
+            npm --workspace neutron-kernel run certified-assets:candidate-binding
+          '
+
+      - name: Verify generated change scope
+        run: |
+          set -euxo pipefail
+          git diff --check
+          unexpected="$({ git status --short || true; } | awk '\
+            $2 != "apps/kernel/backend/main.mo" && \
+            $2 != "apps/kernel/neutron.lock.json" && \
+            $2 != "apps/kernel/certified-assets-candidate-binding.json" && \
+            $2 != ".github/workflows/mtn-0.2-generated-artifacts.yml" { print }')"
+          if [ -n "$unexpected" ]; then
+            printf 'Unexpected generated changes:\n%s\n' "$unexpected" >&2
+            exit 1
+          fi
+
+      - name: Commit canonical generated artifacts
+        run: |
+          set -euxo pipefail
+          git config user.name "plasmon-cloud automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            apps/kernel/backend/main.mo \
+            apps/kernel/neutron.lock.json \
+            apps/kernel/certified-assets-candidate-binding.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Refresh MTN 0.2 generated Kernel artifacts [skip ci]"
+            git push origin HEAD:version-0.2.0
+          fi
+
+      - name: Publish refresh success
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -n --arg state success --arg context mtn-0.2/generated-artifacts --arg description "canonical generated artifacts refreshed" \
+            '{state:$state,context:$context,description:$description}' >/tmp/status.json
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data-binary @/tmp/status.json >/dev/null
+
+      - name: Publish refresh failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -n --arg state failure --arg context mtn-0.2/generated-artifacts --arg description "canonical generated-artifact refresh failed; branch source was not patched" \
+            '{state:$state,context:$context,description:$description}' >/tmp/status.json
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data-binary @/tmp/status.json >/dev/null
